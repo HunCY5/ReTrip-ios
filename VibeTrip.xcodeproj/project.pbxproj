@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F5737EAE30B415B90041D239 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = F5737EAD30B415B90041D239 /* Supabase */; };
 		F59BA9B42F6681BE00F9AAB0 /* KakaoSDKAuth in Frameworks */ = {isa = PBXBuildFile; productRef = F59BA9B32F6681BE00F9AAB0 /* KakaoSDKAuth */; };
 		F59BA9B62F6681BE00F9AAB0 /* KakaoSDKCommon in Frameworks */ = {isa = PBXBuildFile; productRef = F59BA9B52F6681BE00F9AAB0 /* KakaoSDKCommon */; };
 		F59BA9B82F6681BE00F9AAB0 /* KakaoSDKUser in Frameworks */ = {isa = PBXBuildFile; productRef = F59BA9B72F6681BE00F9AAB0 /* KakaoSDKUser */; };
@@ -83,6 +84,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F5737EAE30B415B90041D239 /* Supabase in Frameworks */,
 				F59BA9B62F6681BE00F9AAB0 /* KakaoSDKCommon in Frameworks */,
 				F59BA9B42F6681BE00F9AAB0 /* KakaoSDKAuth in Frameworks */,
 				F5BDE2C72FAB7ECB003444BE /* FirebaseAnalytics in Frameworks */,
@@ -176,6 +178,7 @@
 				F59BA9BE2F66CD1000F9AAB0 /* FirebaseCore */,
 				F59BA9C02F66CD1000F9AAB0 /* FirebaseMessaging */,
 				F5BDE2C62FAB7ECB003444BE /* FirebaseAnalytics */,
+				F5737EAD30B415B90041D239 /* Supabase */,
 			);
 			productName = VibeTrip;
 			productReference = F5D0104F2F52015D0007B939 /* VibeTrip.app */;
@@ -262,6 +265,7 @@
 			packageReferences = (
 				F59BA9B22F6681BE00F9AAB0 /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */,
 				F59BA9BD2F66CD1000F9AAB0 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				F5737EAC30B415B90041D239 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F5D010502F52015D0007B939 /* Products */;
@@ -695,6 +699,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		F5737EAC30B415B90041D239 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.1;
+			};
+		};
 		F59BA9B22F6681BE00F9AAB0 /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/kakao/kakao-ios-sdk";
@@ -714,6 +726,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		F5737EAD30B415B90041D239 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F5737EAC30B415B90041D239 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
 		F59BA9B32F6681BE00F9AAB0 /* KakaoSDKAuth */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = F59BA9B22F6681BE00F9AAB0 /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */;
