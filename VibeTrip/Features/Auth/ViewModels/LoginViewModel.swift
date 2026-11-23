@@ -186,12 +186,21 @@ final class LoginViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
-            let (identityToken, fullName) = try await appleAuthService.login()
+            let nonce = NonceGenerator.make()
+            let (identityToken, fullName) = try await appleAuthService.login(nonce: nonce.hashed)
             #if DEBUG
             print("애플 identityToken: \(identityToken)")
             print("애플 fullName: \(fullName ?? "null")")
             #endif
-            try await performBackendAuth(token: identityToken, provider: .apple, fullName: fullName)
+            try await performSessionAuth(
+                credential: SocialLoginCredential(
+                    provider: .apple,
+                    idToken: identityToken,
+                    accessToken: nil,
+                    nonce: nonce.raw,
+                    fullName: fullName
+                )
+            )
         } catch let loginError as LoginError {
             /// 취소: 에러 UI 없이 그대로 로그인 화면 유지
             if case .cancelled = loginError { return }

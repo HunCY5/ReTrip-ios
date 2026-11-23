@@ -23,8 +23,9 @@ protocol KakaoAuthServiceProtocol {
 // 애플 로그인 인터페이스
 protocol AppleAuthServiceProtocol {
     /// 애플 로그인 실행: identityToken + fullName 반환
+    /// nonce: 해시된 nonce -> 발급되는 identityToken에 포함
     /// 사용자 취소 시: LoginError.cancelled throw
-    func login() async throws -> (identityToken: String, fullName: String?)
+    func login(nonce: String) async throws -> (identityToken: String, fullName: String?)
 }
 
 // MARK: - 백엔드 인증 프로토콜
