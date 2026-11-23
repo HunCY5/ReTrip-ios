@@ -13,18 +13,25 @@ final class MyPageViewModelTests: XCTestCase {
 
     private var mockUserService: MockUserService!
     private var mockKeychainService: MockKeychainService!
+    private var mockSessionAuthService: MockSessionAuthService!
     private var sut: MyPageViewModel!
 
     override func setUp() {
         super.setUp()
         mockUserService = MockUserService()
         mockKeychainService = MockKeychainService()
-        sut = MyPageViewModel(userService: mockUserService, keychainService: mockKeychainService)
+        mockSessionAuthService = MockSessionAuthService()
+        sut = MyPageViewModel(
+            userService: mockUserService,
+            keychainService: mockKeychainService,
+            sessionAuthService: mockSessionAuthService
+        )
     }
 
     override func tearDown() {
         mockUserService = nil
         mockKeychainService = nil
+        mockSessionAuthService = nil
         sut = nil
         super.tearDown()
     }
@@ -58,5 +65,40 @@ final class MyPageViewModelTests: XCTestCase {
         await sut.loadProfile()
 
         XCTAssertFalse(sut.isLoading)
+    }
+
+    // MARK: - 로그아웃
+
+    // 로그아웃 Task 종료 대기 헬퍼 (최대 1초)
+    private func waitForLogout(_ appState: AppState) async {
+        for _ in 0..<100 where appState.isLoggedIn != false {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    // 로그아웃: 현재 기기 기준 세션 종료 요청 후 로그인 화면 전환 및 완료 토스트
+    func test_logout_signsOutAndShowsLoginScreen() async {
+        let appState = AppState(sessionAuthService: MockSessionAuthService())
+        appState.isLoggedIn = true
+
+        sut.logout(appState: appState)
+        await waitForLogout(appState)
+
+        XCTAssertEqual(mockSessionAuthService.signedOutDeviceId, UIDevice.current.identifierForVendor?.uuidString ?? "")
+        XCTAssertEqual(appState.isLoggedIn, false)
+        XCTAssertEqual(appState.toastPayload?.message, "로그아웃이 완료되었습니다")
+        XCTAssertFalse(sut.isLoading)
+    }
+
+    // 로그아웃: 기존 서버 토큰도 함께 제거
+    func test_logout_clearsLegacyKeychainTokens() async {
+        let appState = AppState(sessionAuthService: MockSessionAuthService())
+        appState.isLoggedIn = true
+
+        sut.logout(appState: appState)
+        await waitForLogout(appState)
+
+        XCTAssertNil(mockKeychainService.accessToken)
+        XCTAssertNil(mockKeychainService.refreshToken)
     }
 }
