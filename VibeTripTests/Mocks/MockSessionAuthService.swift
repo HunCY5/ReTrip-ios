@@ -32,5 +32,12 @@ final class MockSessionAuthService: SessionAuthServiceProtocol {
             throw error
         }
     }
+
+    // 저장된 세션 존재 여부 시뮬레이션
+    var hasStoredSession: Bool = false
+
+    func sessionEndedEvents() -> AsyncStream<Void> {
+        AsyncStream { $0.finish() }
+    }
 }
 #endif

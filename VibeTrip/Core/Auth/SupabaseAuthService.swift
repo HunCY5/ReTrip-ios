@@ -62,6 +62,22 @@ final class SupabaseAuthService: SessionAuthServiceProtocol {
         await registerDevice(memberId: memberId, deviceId: deviceId, fcmToken: fcmToken)
     }
 
+    var hasStoredSession: Bool {
+        client.auth.currentSession != nil
+    }
+
+    func sessionEndedEvents() -> AsyncStream<Void> {
+        AsyncStream { continuation in
+            let task = Task { [client] in
+                for await (event, _) in client.auth.authStateChanges where event == .signedOut {
+                    continuation.yield()
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     // MARK: - Private
 
     // 제공자별 세션 발급

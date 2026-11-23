@@ -36,6 +36,12 @@ protocol SessionAuthServiceProtocol {
     /// deviceId: 기기 고유 식별자
     /// fcmToken: FCM 푸시 토큰 (빈 값이면 기기 등록 생략)
     func signIn(with credential: SocialLoginCredential, deviceId: String, fcmToken: String) async throws
+
+    /// 기기에 저장된 로그인 세션 존재 여부 (만료된 세션은 SDK가 사용 시점에 갱신)
+    var hasStoredSession: Bool { get }
+
+    /// 세션 종료 이벤트 스트림 (로그아웃, 세션 갱신 실패 등)
+    func sessionEndedEvents() -> AsyncStream<Void>
 }
 
 // 세션 발급에 필요한 소셜 로그인 결과

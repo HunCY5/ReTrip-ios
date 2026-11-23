@@ -91,12 +91,31 @@ struct AppToastPayload: Equatable {
     // APIClient.sessionExpiredPublisher 구독 유지용
     private var cancellables = Set<AnyCancellable>()
 
-    init(apiClient: APIClientProtocol = APIClient.shared) {
+    private let sessionAuthService: SessionAuthServiceProtocol
+
+    init(
+        apiClient: APIClientProtocol = APIClient.shared,
+        sessionAuthService: SessionAuthServiceProtocol = SupabaseAuthService()
+    ) {
+        self.sessionAuthService = sessionAuthService
+
         // refreshToken 만료 시 APIClient가 발행 -> 자동 로그아웃
         apiClient.sessionExpiredPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.isLoggedIn = false }
             .store(in: &cancellables)
+
+        // Supabase 세션 종료(세션 갱신 실패 등) -> 로그인 화면 복귀
+        Task { [weak self, sessionAuthService] in
+            for await _ in sessionAuthService.sessionEndedEvents() {
+                self?.isLoggedIn = false
+            }
+        }
+    }
+
+    // 앱 진입 시 저장된 로그인 세션 유무로 초기 화면 결정
+    func restoreLoginState() {
+        isLoggedIn = sessionAuthService.hasStoredSession
     }
 
     func showToast(message: String, systemImageName: String? = "exclamationmark.circle") {
