@@ -33,6 +33,7 @@ import FirebaseMessaging
 
     private let userService: UserServiceProtocol
     private let keychainService: KeychainServiceProtocol
+    private let sessionAuthService: SessionAuthServiceProtocol
     private var pendingNotificationEnable = false
     
     private enum Constants {
@@ -44,10 +45,12 @@ import FirebaseMessaging
     // nonisolated: SwiftUI @StateObject가 nonisolated context에서 생성 가능하도록
     nonisolated init(
         userService: UserServiceProtocol = UserService(),
-        keychainService: KeychainServiceProtocol = KeychainService()
+        keychainService: KeychainServiceProtocol = KeychainService(),
+        sessionAuthService: SessionAuthServiceProtocol = SupabaseAuthService()
     ) {
         self.userService = userService
         self.keychainService = keychainService
+        self.sessionAuthService = sessionAuthService
         // @Published backing store 직접 초기화: nonisolated context에서 @MainActor 프로퍼티 세팅 우회
         let enabled = UserDefaults.standard.object(forKey: "isNotificationEnabled") as? Bool ?? true
         self._isNotificationEnabled = Published(initialValue: enabled)
@@ -102,10 +105,17 @@ import FirebaseMessaging
     }
     
     func logout(appState: AppState) {
-        // 로컬 인증 정보 제거 후 로그인 화면으로 복귀
-        try? keychainService.clear()
-        appState.showToast(message: "로그아웃이 완료되었습니다", systemImageName: "checkmark.circle")
-        appState.isLoggedIn = false
+        Task {
+            isLoading = true
+            defer { isLoading = false }
+            // Supabase 세션 종료(기기 푸시 등록 해제 포함)
+            let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? ""
+            await sessionAuthService.signOut(deviceId: deviceId)
+            // 로컬 인증 정보 제거 후 로그인 화면으로 복귀
+            try? keychainService.clear()
+            appState.showToast(message: "로그아웃이 완료되었습니다", systemImageName: "checkmark.circle")
+            appState.isLoggedIn = false
+        }
     }
     
     func withdraw(appState: AppState) {

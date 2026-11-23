@@ -189,8 +189,6 @@ struct VibeTripApp: App {
     @State private var isDismissingSplash = false
     @State private var minimumSplashElapsed = false
 
-    private let keychainService: KeychainServiceProtocol = KeychainService()
-
     var body: some Scene {
         WindowGroup {
             ZStack {
@@ -222,8 +220,8 @@ struct VibeTripApp: App {
                 }
             }
             .task {
-                // 앱 진입 시 Keychain 토큰 유무로 초기 화면 결정
-                appState.isLoggedIn = (try? keychainService.getAccessToken()) != nil
+                // 앱 진입 시 저장된 로그인 세션 유무로 초기 화면 결정
+                appState.restoreLoginState()
                 delegate.appState = appState
             }
             .task {

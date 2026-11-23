@@ -21,12 +21,13 @@ final class AppleAuthService: NSObject, AppleAuthServiceProtocol {
     private var controller: ASAuthorizationController?
 
     // delegate 콜백(성공/취소/실패) 대기 -> 네트워크 타임아웃은 백엔드 통신 구간에서 담당.
-    func login() async throws -> (identityToken: String, fullName: String?) {
+    func login(nonce: String) async throws -> (identityToken: String, fullName: String?) {
         try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
 
             let request = ASAuthorizationAppleIDProvider().createRequest()
             request.requestedScopes = [.fullName, .email]
+            request.nonce = nonce
 
             let controller = ASAuthorizationController(authorizationRequests: [request])
             controller.delegate = self

@@ -17,3 +17,7 @@ SERVER_URL = https:/$()/prod.retrip.shop // `$()` 구분자 -> xcconfig // 주�
 // 카카오 네이티브 앱 키 및 URL 스킴
 KAKAO_APP_KEY = d548b26dc60788de25258a6b7354ace3
 KAKAO_URL_SCHEME = kakaod548b26dc60788de25258a6b7354ace3
+
+// Supabase 프로젝트 접속 정보 (publishable 키: 앱 배포용 공개 키, 데이터 접근은 RLS로 제한)
+SUPABASE_URL = https:/$()/lsstjaxitqxbadntyaiy.supabase.co // `$()` 구분자 -> xcconfig // 주석 해석 방지
+SUPABASE_PUBLISHABLE_KEY = sb_publishable_qYOstvOHqFG9O1Rv6iP_Cw_P4RZTfOP

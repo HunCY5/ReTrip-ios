@@ -24,11 +24,23 @@ enum AppConfig {
         value(for: Key.kakaoAppKey)
     }
 
+    // Supabase 프로젝트 URL
+    static var supabaseURL: String {
+        value(for: Key.supabaseURL)
+    }
+
+    // Supabase publishable 키 (앱 배포용 공개 키)
+    static var supabasePublishableKey: String {
+        value(for: Key.supabasePublishableKey)
+    }
+
     // MARK: - Private
 
     private enum Key {
         static let serverURL = "SERVER_URL"
         static let kakaoAppKey = "KAKAO_APP_KEY"
+        static let supabaseURL = "SUPABASE_URL"
+        static let supabasePublishableKey = "SUPABASE_PUBLISHABLE_KEY"
     }
 
     private static func value(for key: String) -> String {

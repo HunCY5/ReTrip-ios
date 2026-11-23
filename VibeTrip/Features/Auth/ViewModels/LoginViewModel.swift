@@ -6,12 +6,11 @@
 //
 
 // 로그인 화면 비즈니스 로직 담당
-// 플로우: 소셜 로그인 -> 백엔드 JWT 요청 -> 결과 처리
+// 플로우: 소셜 로그인 -> Supabase 세션 발급 -> 결과 처리
 
 import Foundation
 import UIKit
 import Combine
-import AuthenticationServices
 import FirebaseMessaging
 
 @MainActor
@@ -43,8 +42,7 @@ final class LoginViewModel: ObservableObject {
     
     private let kakaoAuthService: KakaoAuthServiceProtocol
     private let appleAuthService: AppleAuthServiceProtocol
-    private let backendAuthService: BackendAuthServiceProtocol
-    private let keychainService: KeychainServiceProtocol
+    private let sessionAuthService: SessionAuthServiceProtocol
     private let fcmTokenProvider: () async -> String
 
     // MARK: - Init
@@ -52,14 +50,12 @@ final class LoginViewModel: ObservableObject {
     init(
         kakaoAuthService: KakaoAuthServiceProtocol? = nil,
         appleAuthService: AppleAuthServiceProtocol? = nil,
-        backendAuthService: BackendAuthServiceProtocol? = nil,
-        keychainService: KeychainServiceProtocol? = nil,
+        sessionAuthService: SessionAuthServiceProtocol? = nil,
         fcmTokenProvider: (() async -> String)? = nil
     ) {
         self.kakaoAuthService = kakaoAuthService ?? KakaoAuthService()
         self.appleAuthService = appleAuthService ?? AppleAuthService()
-        self.backendAuthService = backendAuthService ?? BackendAuthService()
-        self.keychainService = keychainService ?? KeychainService()
+        self.sessionAuthService = sessionAuthService ?? SupabaseAuthService()
         self.fcmTokenProvider = fcmTokenProvider ?? {
             (try? await Messaging.messaging().token()) ?? ""
         }
@@ -75,49 +71,7 @@ final class LoginViewModel: ObservableObject {
 
     // MARK: - 애플 로그인
 
-    // SignInWithAppleButton onCompletion 결과 처리(초기 로그인)
-    func handleAppleResult(_ result: Result<ASAuthorization, Error>) {
-        guard !isLoading else { return }
-        lastLoginProvider = .apple
-        Task {
-            isLoading = true
-            errorState = nil
-            defer { isLoading = false }
-
-            do {
-                let authorization = try result.get()
-                guard
-                    let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
-                    let tokenData = credential.identityToken,
-                    let identityToken = String(data: tokenData, encoding: .utf8)
-                else {
-                    errorState = LoginError.providerError.errorState
-                    return
-                }
-
-                let nameParts = [credential.fullName?.givenName, credential.fullName?.familyName]
-                    .compactMap { $0 }
-                let fullName: String? = nameParts.isEmpty ? nil : nameParts.joined(separator: " ")
-
-                #if DEBUG
-                print("애플 identityToken: \(identityToken)")
-                print("애플 fullName: \(fullName ?? "null")")
-                #endif
-
-                try await performBackendAuth(token: identityToken, provider: .apple, fullName: fullName)
-
-            } catch let authError as ASAuthorizationError where authError.code == .canceled {
-                return
-            } catch let loginError as LoginError {
-                if case .cancelled = loginError { return }
-                errorState = loginError.errorState
-            } catch {
-                errorState = LoginError.providerError.errorState
-            }
-        }
-    }
-
-    // AppleAuthService를 통한 애플 로그인 (재시도 경로)
+    // AppleAuthService를 통한 애플 로그인
     func loginWithApple() {
         guard !isLoading else { return }
         lastLoginProvider = .apple
@@ -154,12 +108,21 @@ final class LoginViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
-            /// 카카오 토큰 획득
-            let token = try await kakaoAuthService.login()
+            /// 카카오 idToken 획득 (해시된 nonce 포함)
+            let nonce = NonceGenerator.make()
+            let (idToken, accessToken) = try await kakaoAuthService.login(nonce: nonce.hashed)
             #if DEBUG
-            print("카카오 accessToken: \(token)")
+            print("카카오 idToken: \(idToken)")
             #endif
-            try await performBackendAuth(token: token, provider: .kakao)
+            try await performSessionAuth(
+                credential: SocialLoginCredential(
+                    provider: .kakao,
+                    idToken: idToken,
+                    accessToken: accessToken,
+                    nonce: nonce.raw,
+                    fullName: nil
+                )
+            )
         } catch let loginError as LoginError {
             if case .cancelled = loginError { return }
             errorState = loginError.errorState
@@ -174,12 +137,21 @@ final class LoginViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
-            let (identityToken, fullName) = try await appleAuthService.login()
+            let nonce = NonceGenerator.make()
+            let (identityToken, fullName) = try await appleAuthService.login(nonce: nonce.hashed)
             #if DEBUG
             print("애플 identityToken: \(identityToken)")
             print("애플 fullName: \(fullName ?? "null")")
             #endif
-            try await performBackendAuth(token: identityToken, provider: .apple, fullName: fullName)
+            try await performSessionAuth(
+                credential: SocialLoginCredential(
+                    provider: .apple,
+                    idToken: identityToken,
+                    accessToken: nil,
+                    nonce: nonce.raw,
+                    fullName: fullName
+                )
+            )
         } catch let loginError as LoginError {
             /// 취소: 에러 UI 없이 그대로 로그인 화면 유지
             if case .cancelled = loginError { return }
@@ -194,33 +166,17 @@ final class LoginViewModel: ObservableObject {
         await fcmTokenProvider()
     }
 
-    // 카카오&애플 공통 백엔드 인증 요청
-    private func performBackendAuth(token: String, provider: LoginProvider, fullName: String? = nil) async throws {
+    // 카카오&애플 공통 Supabase 세션 발급 + 기기 등록
+    private func performSessionAuth(credential: SocialLoginCredential) async throws {
         let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? ""
         let fcmToken = await fetchFCMToken()
         #if DEBUG
         print("deviceId: \(deviceId)")
         print("fcmToken: \(fcmToken)")
-        print("백엔드 요청. provider: \(provider.rawValue)")
+        print("Supabase 세션 요청. provider: \(credential.provider.rawValue)")
         #endif
 
-        let authToken = try await backendAuthService.authenticate(
-            token: token,
-            provider: provider,
-            deviceId: deviceId,
-            fcmToken: fcmToken,
-            fullName: fullName
-        )
-
-        do {
-            try keychainService.save(
-                accessToken: authToken.accessToken,
-                refreshToken: authToken.refreshToken
-            )
-        } catch {
-            throw LoginError.networkError
-        }
-
+        try await sessionAuthService.signIn(with: credential, deviceId: deviceId, fcmToken: fcmToken)
         isLoggedIn = true
     }
 }
