@@ -46,6 +46,29 @@ extension BackendAuthServiceProtocol {
     }
 }
 
+// MARK: - 세션 인증 프로토콜
+
+// 소셜 로그인 ID 토큰으로 Supabase 세션 발급 인터페이스
+protocol SessionAuthServiceProtocol {
+    /// 세션 발급 후 푸시 수신 기기 등록
+    /// deviceId: 기기 고유 식별자
+    /// fcmToken: FCM 푸시 토큰 (빈 값이면 기기 등록 생략)
+    func signIn(with credential: SocialLoginCredential, deviceId: String, fcmToken: String) async throws
+}
+
+// 세션 발급에 필요한 소셜 로그인 결과
+struct SocialLoginCredential: Equatable {
+    let provider: LoginProvider
+    /// 카카오(OIDC) or 애플에서 발급된 ID 토큰
+    let idToken: String
+    /// (카카오) ID 토큰의 at_hash 검증용 액세스 토큰
+    let accessToken: String?
+    /// 로그인 요청 시 해시해서 전달한 nonce 원본
+    let nonce: String
+    /// (애플) 최초 로그인 시에만 제공되는 이름
+    let fullName: String?
+}
+
 // MARK: - 로그인 제공자 타입
 
 enum LoginProvider: String {
