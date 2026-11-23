@@ -42,6 +42,9 @@ protocol SessionAuthServiceProtocol {
 
     /// 세션 종료 이벤트 스트림 (로그아웃, 세션 갱신 실패 등)
     func sessionEndedEvents() -> AsyncStream<Void>
+
+    /// 로그아웃: 현재 기기의 푸시 수신 등록 해제 후 세션 종료
+    func signOut(deviceId: String) async
 }
 
 // 세션 발급에 필요한 소셜 로그인 결과

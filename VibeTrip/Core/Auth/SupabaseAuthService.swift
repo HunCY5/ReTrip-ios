@@ -78,6 +78,30 @@ final class SupabaseAuthService: SessionAuthServiceProtocol {
         }
     }
 
+    func signOut(deviceId: String) async {
+        // 로그아웃한 기기로 푸시가 가지 않도록 등록 해제 (세션이 살아 있을 때만 본인 데이터 삭제 가능)
+        if let memberId = client.auth.currentSession?.user.id, !deviceId.isEmpty {
+            do {
+                try await client.from(Table.memberDevice)
+                    .delete()
+                    .eq("member_id", value: memberId)
+                    .eq("device_id", value: deviceId)
+                    .execute()
+            } catch {
+                #if DEBUG
+                print("기기 등록 해제 실패: \(error)")
+                #endif
+            }
+        }
+
+        // 서버 세션 종료 실패(네트워크 등) 시에도 기기에 저장된 세션은 제거
+        do {
+            try await client.auth.signOut()
+        } catch {
+            try? await client.auth.signOut(scope: .local)
+        }
+    }
+
     // MARK: - Private
 
     // 제공자별 세션 발급

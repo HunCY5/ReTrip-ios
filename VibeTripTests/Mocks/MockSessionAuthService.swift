@@ -39,5 +39,12 @@ final class MockSessionAuthService: SessionAuthServiceProtocol {
     func sessionEndedEvents() -> AsyncStream<Void> {
         AsyncStream { $0.finish() }
     }
+
+    // 로그아웃 호출 검증용
+    private(set) var signedOutDeviceId: String?
+
+    func signOut(deviceId: String) async {
+        signedOutDeviceId = deviceId
+    }
 }
 #endif
