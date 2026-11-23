@@ -6,7 +6,7 @@
 //
 
 // 로그인 화면 비즈니스 로직 담당
-// 플로우: 소셜 로그인 -> 백엔드 JWT 요청 -> 결과 처리
+// 플로우: 소셜 로그인 -> Supabase 세션 발급 -> 결과 처리
 
 import Foundation
 import UIKit
@@ -44,6 +44,7 @@ final class LoginViewModel: ObservableObject {
     private let kakaoAuthService: KakaoAuthServiceProtocol
     private let appleAuthService: AppleAuthServiceProtocol
     private let backendAuthService: BackendAuthServiceProtocol
+    private let sessionAuthService: SessionAuthServiceProtocol
     private let keychainService: KeychainServiceProtocol
     private let fcmTokenProvider: () async -> String
 
@@ -53,12 +54,14 @@ final class LoginViewModel: ObservableObject {
         kakaoAuthService: KakaoAuthServiceProtocol? = nil,
         appleAuthService: AppleAuthServiceProtocol? = nil,
         backendAuthService: BackendAuthServiceProtocol? = nil,
+        sessionAuthService: SessionAuthServiceProtocol? = nil,
         keychainService: KeychainServiceProtocol? = nil,
         fcmTokenProvider: (() async -> String)? = nil
     ) {
         self.kakaoAuthService = kakaoAuthService ?? KakaoAuthService()
         self.appleAuthService = appleAuthService ?? AppleAuthService()
         self.backendAuthService = backendAuthService ?? BackendAuthService()
+        self.sessionAuthService = sessionAuthService ?? SupabaseAuthService()
         self.keychainService = keychainService ?? KeychainService()
         self.fcmTokenProvider = fcmTokenProvider ?? {
             (try? await Messaging.messaging().token()) ?? ""
@@ -154,12 +157,21 @@ final class LoginViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
-            /// 카카오 토큰 획득
-            let token = try await kakaoAuthService.login()
+            /// 카카오 idToken 획득 (해시된 nonce 포함)
+            let nonce = NonceGenerator.make()
+            let (idToken, accessToken) = try await kakaoAuthService.login(nonce: nonce.hashed)
             #if DEBUG
-            print("카카오 accessToken: \(token)")
+            print("카카오 idToken: \(idToken)")
             #endif
-            try await performBackendAuth(token: token, provider: .kakao)
+            try await performSessionAuth(
+                credential: SocialLoginCredential(
+                    provider: .kakao,
+                    idToken: idToken,
+                    accessToken: accessToken,
+                    nonce: nonce.raw,
+                    fullName: nil
+                )
+            )
         } catch let loginError as LoginError {
             if case .cancelled = loginError { return }
             errorState = loginError.errorState
@@ -192,6 +204,20 @@ final class LoginViewModel: ObservableObject {
     // FCM 토큰 획득, 실패 시 빈 문자열 반환
     private func fetchFCMToken() async -> String {
         await fcmTokenProvider()
+    }
+
+    // 카카오&애플 공통 Supabase 세션 발급 + 기기 등록
+    private func performSessionAuth(credential: SocialLoginCredential) async throws {
+        let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? ""
+        let fcmToken = await fetchFCMToken()
+        #if DEBUG
+        print("deviceId: \(deviceId)")
+        print("fcmToken: \(fcmToken)")
+        print("Supabase 세션 요청. provider: \(credential.provider.rawValue)")
+        #endif
+
+        try await sessionAuthService.signIn(with: credential, deviceId: deviceId, fcmToken: fcmToken)
+        isLoggedIn = true
     }
 
     // 카카오&애플 공통 백엔드 인증 요청

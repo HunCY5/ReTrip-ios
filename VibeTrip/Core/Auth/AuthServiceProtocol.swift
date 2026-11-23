@@ -14,9 +14,10 @@ import Foundation
 
 // 카카오 로그인 인터페이스
 protocol KakaoAuthServiceProtocol {
-    /// 카카오 로그인 실행: accessToken 반환
+    /// 카카오 로그인 실행(OpenID Connect): idToken + accessToken 반환
+    /// nonce: 해시된 nonce -> 발급되는 idToken에 포함
     /// 사용자 취소 시: LoginError.cancelled throw
-    func login() async throws -> String
+    func login(nonce: String) async throws -> (idToken: String, accessToken: String)
 }
 
 // 애플 로그인 인터페이스

@@ -12,8 +12,8 @@ import XCTest
 // MARK: - Mock
 
 final class MockKakaoAuthService: KakaoAuthServiceProtocol {
-    var result: Result<String, Error> = .success("mock-kakao-token")
-    func login() async throws -> String { try result.get() }
+    var result: Result<(idToken: String, accessToken: String), Error> = .success((idToken: "mock-kakao-id-token", accessToken: "mock-kakao-token"))
+    func login(nonce: String) async throws -> (idToken: String, accessToken: String) { try result.get() }
 }
 
 // MARK: - Tests
@@ -23,19 +23,19 @@ final class LoginViewModelTests: XCTestCase {
 
     // ViewModel 생성 헬퍼
     func makeViewModel(
-        kakaoResult: Result<String, Error> = .success("mock-kakao-token"),
+        kakaoResult: Result<(idToken: String, accessToken: String), Error> = .success((idToken: "mock-kakao-id-token", accessToken: "mock-kakao-token")),
         backendError: LoginError? = nil
     ) -> LoginViewModel {
         let kakao = MockKakaoAuthService()
         kakao.result = kakaoResult
 
-        let backend = MockBackendAuthService()
-        backend.simulatedError = backendError
-        backend.delay = 0   // 테스트에서 딜레이 제거
+        let session = MockSessionAuthService()
+        session.simulatedError = backendError
+        session.delay = 0   // 테스트에서 딜레이 제거
 
         return LoginViewModel(
             kakaoAuthService: kakao,
-            backendAuthService: backend,
+            sessionAuthService: session,
             fcmTokenProvider: { "test-fcm-token" }
         )
     }
