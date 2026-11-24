@@ -93,12 +93,17 @@ final class AlbumService: AlbumServiceProtocol {
     // MARK: - Constants
 
     private enum Table {
+        static let album = "album"
         static let albumCardView = "album_card_view"
     }
 
     // 메인 화면 카드 표시에 필요한 컬럼
     private static let albumCardColumns =
         "id,title,region,travel_start_date,travel_end_date,cover_image_path,log_image_count,preview_log_image_paths"
+    // 상세·수정 화면 표시에 필요한 앨범 + 음악 컬럼
+    private static let albumDetailColumns =
+        "title,cover_image_path,region,travel_start_date,travel_end_date,comment,"
+        + "album_music(genre,with_lyrics,vocal_gender,status,music_path)"
     // 다음 페이지 존재 여부 확인용 추가 조회 수
     private static let nextPageProbeCount = 1
 
@@ -288,9 +293,15 @@ final class AlbumService: AlbumServiceProtocol {
         try await apiClient.perform(endpoint)
     }
 
+    // 앨범 정보 + 음악 정보 한 번에 조회 (RLS로 본인 앨범이 아니면 조회 실패)
     func fetchAlbum(albumId: Int) async throws -> AlbumDetail {
-        let endpoint = APIEndpoint(path: "/api/v1/albums/\(albumId)", method: .get)
-        return try await apiClient.request(endpoint)
+        let row: AlbumDetailRow = try await supabase.from(Table.album)
+            .select(Self.albumDetailColumns)
+            .eq("id", value: albumId)
+            .single()
+            .execute()
+            .value
+        return makeAlbumDetail(from: row)
     }
 
     func saveLog(request: AlbumLogRequest) async throws {
@@ -352,6 +363,59 @@ final class AlbumService: AlbumServiceProtocol {
             }
         )
     }
+
+    // 조회 결과 -> 상세 모델
+    // 음악 생성 완료 전에는 musicUrl nil -> 화면에서 생성 중 상태로 판단
+    private func makeAlbumDetail(from row: AlbumDetailRow) -> AlbumDetail {
+        let music = row.albumMusic
+        let isMusicReady = music?.status == AlbumMusicStatusValue.completed
+        return AlbumDetail(
+            title: row.title?.isEmpty == true ? nil : row.title,
+            coverImageUrl: storage.publicURL(bucket: .covers, path: row.coverImagePath),
+            region: row.region,
+            travelStartDate: row.travelStartDate,
+            travelEndDate: row.travelEndDate,
+            musicUrl: isMusicReady ? storage.publicURL(bucket: .music, path: music?.musicPath) : nil,
+            genre: music.flatMap { AlbumGenre(serverValue: $0.genre) },
+            vocalGender: music.flatMap { VocalGender(serverValue: $0.vocalGender) },
+            withLyrics: music?.withLyrics ?? false,
+            comment: row.comment
+        )
+    }
+}
+
+// 음악 생성 상태 (DB music_status)
+private enum AlbumMusicStatusValue {
+    static let completed = "COMPLETED"
+}
+
+// MARK: - AlbumGenre + Server Value
+
+private extension AlbumGenre {
+    // DB 장르 값 -> 장르 (가사 없는 재즈는 재즈로 표시)
+    init?(serverValue: String) {
+        if serverValue == "JAZZ_NO_VOCAL" {
+            self = .jazz
+            return
+        }
+        guard let matched = AlbumGenre.allCases.first(where: { $0.serverValue == serverValue }) else {
+            return nil
+        }
+        self = matched
+    }
+}
+
+// MARK: - VocalGender + Server Value
+
+private extension VocalGender {
+    // DB 값 "M"/"F" -> 보컬 성별, "N"(보컬 없음) -> nil
+    init?(serverValue: String) {
+        switch serverValue {
+        case "M": self = .male
+        case "F": self = .female
+        default: return nil
+        }
+    }
 }
 
 // MARK: - Supabase Row
@@ -374,6 +438,42 @@ private nonisolated struct AlbumCardRow: Decodable {
         case coverImagePath = "cover_image_path"
         case logImageCount = "log_image_count"
         case previewLogImagePaths = "preview_log_image_paths"
+    }
+}
+
+// 앨범 상세 조회 결과 (album + album_music)
+private nonisolated struct AlbumDetailRow: Decodable {
+    let title: String?
+    let coverImagePath: String?
+    let region: String
+    let travelStartDate: String
+    let travelEndDate: String
+    let comment: String?
+    // 앨범당 음악 1개 (생성 요청 전이면 nil)
+    let albumMusic: AlbumMusicRow?
+
+    enum CodingKeys: String, CodingKey {
+        case title, region, comment
+        case coverImagePath = "cover_image_path"
+        case travelStartDate = "travel_start_date"
+        case travelEndDate = "travel_end_date"
+        case albumMusic = "album_music"
+    }
+}
+
+// 앨범 음악 조회 결과 (album_music)
+private nonisolated struct AlbumMusicRow: Decodable {
+    let genre: String
+    let withLyrics: Bool
+    let vocalGender: String
+    let status: String
+    let musicPath: String?
+
+    enum CodingKeys: String, CodingKey {
+        case genre, status
+        case withLyrics = "with_lyrics"
+        case vocalGender = "vocal_gender"
+        case musicPath = "music_path"
     }
 }
 
