@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Supabase
 
 // MARK: - AlbumServiceProtocol
 
@@ -89,22 +90,57 @@ private struct AlbumUpdateRequestBody: Encodable {
 
 final class AlbumService: AlbumServiceProtocol {
 
-    private let apiClient: APIClientProtocol
+    // MARK: - Constants
 
-    init(apiClient: APIClientProtocol = APIClient.shared) {
-        self.apiClient = apiClient
+    private enum Table {
+        static let albumCardView = "album_card_view"
     }
 
+    // 메인 화면 카드 표시에 필요한 컬럼
+    private static let albumCardColumns =
+        "id,title,region,travel_start_date,travel_end_date,cover_image_path,log_image_count,preview_log_image_paths"
+    // 다음 페이지 존재 여부 확인용 추가 조회 수
+    private static let nextPageProbeCount = 1
+
+    // MARK: - Dependencies
+
+    private let apiClient: APIClientProtocol
+    private let supabase: SupabaseClient
+    private let storage: AlbumStorage
+
+    // MARK: - Init
+
+    init(
+        apiClient: APIClientProtocol = APIClient.shared,
+        supabase: SupabaseClient = SupabaseClientProvider.shared
+    ) {
+        self.apiClient = apiClient
+        self.supabase = supabase
+        self.storage = AlbumStorage(client: supabase)
+    }
+
+    // 최신 앨범부터 조회 (RLS로 본인 앨범만 반환)
+    // - cursor: 존재 -> 해당 albumId보다 먼저 만든 앨범부터, 존재X -> 첫 페이지부터 조회
+    // - limit보다 1개 더 조회해 다음 페이지 존재 여부 판단
+    // - totalCount: cursor 이후 남은 앨범 수
     func fetchAlbums(cursor: Int?, limit: Int) async throws -> AlbumListPayload {
-        // cursor: 존재 ->해당 albumId 이후부터, 존재X -> 첫 페이지부터 조회
-        var queryItems: [URLQueryItem] = [
-            URLQueryItem(name: "limit", value: String(limit))
-        ]
+        var query = supabase.from(Table.albumCardView)
+            .select(Self.albumCardColumns, count: .exact)
         if let cursor {
-            queryItems.append(URLQueryItem(name: "cursor", value: String(cursor)))
+            query = query.lt("id", value: cursor)
         }
-        let endpoint = APIEndpoint(path: "/api/v1/albums", method: .get, queryItems: queryItems)
-        return try await apiClient.request(endpoint)
+        let response: PostgrestResponse<[AlbumCardRow]> = try await query
+            .order("id", ascending: false)
+            .limit(limit + Self.nextPageProbeCount)
+            .execute()
+
+        let rows = response.value
+        let cards = rows.prefix(limit).map(makeAlbumCard)
+        return AlbumListPayload(
+            content: cards,
+            totalCount: response.count ?? cards.count,
+            hasNext: rows.count > limit
+        )
     }
 
     // 커버 이미지 + 앨범 정보: multipart/form-data로 전송해 앨범 생성
@@ -297,6 +333,48 @@ final class AlbumService: AlbumServiceProtocol {
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
+
+    // MARK: - Mapping
+
+    // 조회 결과 -> 카드 모델 (파일 경로는 공개 URL로 변환)
+    private func makeAlbumCard(from row: AlbumCardRow) -> AlbumCard {
+        AlbumCard(
+            id: row.id,
+            // 빈 문자열은 타이틀 생성 중 상태이므로 nil 처리
+            title: row.title?.isEmpty == true ? nil : row.title,
+            location: row.region,
+            startDate: row.travelStartDate,
+            endDate: row.travelEndDate,
+            coverImageUrl: storage.publicURL(bucket: .covers, path: row.coverImagePath),
+            logImageCount: row.logImageCount ?? 0,
+            previewLogImages: (row.previewLogImagePaths ?? []).compactMap { path in
+                storage.publicURL(bucket: .logImages, path: path).map(PreviewLogImage.init)
+            }
+        )
+    }
+}
+
+// MARK: - Supabase Row
+
+// 앨범 카드 조회 결과 (album_card_view)
+private nonisolated struct AlbumCardRow: Decodable {
+    let id: Int
+    let title: String?
+    let region: String
+    let travelStartDate: String
+    let travelEndDate: String
+    let coverImagePath: String?
+    let logImageCount: Int?
+    let previewLogImagePaths: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, region
+        case travelStartDate = "travel_start_date"
+        case travelEndDate = "travel_end_date"
+        case coverImagePath = "cover_image_path"
+        case logImageCount = "log_image_count"
+        case previewLogImagePaths = "preview_log_image_paths"
+    }
 }
 
 // MARK: - MockAlbumService (DEBUG 전용)
