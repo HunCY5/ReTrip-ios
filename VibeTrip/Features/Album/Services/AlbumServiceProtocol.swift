@@ -92,6 +92,9 @@ final class AlbumService: AlbumServiceProtocol {
     private static let albumDetailColumns =
         "title,cover_image_path,region,travel_start_date,travel_end_date,comment,"
         + "album_music(genre,with_lyrics,vocal_gender,status,music_path)"
+    // 앨범 삭제 시 정리할 파일 경로 (커버, 음악, 기록 이미지)
+    private static let albumFileColumns =
+        "cover_image_path,album_music(music_path),album_log(album_log_image(image_path))"
     // 다음 페이지 존재 여부 확인용 추가 조회 수
     private static let nextPageProbeCount = 1
 
@@ -259,9 +262,29 @@ final class AlbumService: AlbumServiceProtocol {
         }
     }
 
+    // 앨범 삭제 후 관련 파일 정리
+    // - 앨범 행 삭제 시 음악·기록·기록 이미지 행은 DB에서 함께 삭제
+    // - 행이 사라지면 파일 경로를 알 수 없으므로 삭제 전에 경로를 먼저 수집
+    // - 파일 정리는 실패해도 앨범 삭제는 성공으로 처리
     func deleteAlbum(albumId: String) async throws {
-        let endpoint = APIEndpoint(path: "/api/v1/albums/\(albumId)", method: .delete)
-        try await apiClient.perform(endpoint)
+        let files: AlbumFilesRow = try await supabase.from(Table.album)
+            .select(Self.albumFileColumns)
+            .eq("id", value: albumId)
+            .single()
+            .execute()
+            .value
+
+        // 삭제된 행을 1건 반환받아 본인 앨범이 아닌 경우(RLS로 0건) 실패 처리
+        try await supabase.from(Table.album)
+            .delete()
+            .eq("id", value: albumId)
+            .select("id")
+            .single()
+            .execute()
+
+        await storage.removeFiles(bucket: .covers, paths: [files.coverImagePath])
+        await storage.removeFiles(bucket: .logImages, paths: files.logImagePaths)
+        await storage.removeFiles(bucket: .music, paths: files.musicPaths)
     }
 
     // 앨범 정보 + 음악 정보 한 번에 조회 (RLS로 본인 앨범이 아니면 조회 실패)
@@ -451,6 +474,51 @@ private nonisolated struct AlbumCoverRow: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case coverImagePath = "cover_image_path"
+    }
+}
+
+// 앨범 삭제 시 정리할 파일 경로 조회 결과
+private nonisolated struct AlbumFilesRow: Decodable {
+    let coverImagePath: String
+    let albumMusic: MusicPath?
+    let albumLog: [LogImages]
+
+    struct MusicPath: Decodable {
+        let musicPath: String?
+
+        enum CodingKeys: String, CodingKey {
+            case musicPath = "music_path"
+        }
+    }
+
+    struct LogImages: Decodable {
+        let albumLogImage: [ImagePath]
+
+        enum CodingKeys: String, CodingKey {
+            case albumLogImage = "album_log_image"
+        }
+    }
+
+    struct ImagePath: Decodable {
+        let imagePath: String
+
+        enum CodingKeys: String, CodingKey {
+            case imagePath = "image_path"
+        }
+    }
+
+    var musicPaths: [String] {
+        [albumMusic?.musicPath].compactMap { $0 }
+    }
+
+    var logImagePaths: [String] {
+        albumLog.flatMap { $0.albumLogImage.map(\.imagePath) }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case coverImagePath = "cover_image_path"
+        case albumMusic = "album_music"
+        case albumLog = "album_log"
     }
 }
 
