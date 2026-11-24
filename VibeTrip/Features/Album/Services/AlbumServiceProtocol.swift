@@ -74,18 +74,6 @@ private struct AlbumCreateRequestBody: Encodable {
     let comment: String
 }
 
-private struct AlbumUpdateRequestBody: Encodable {
-    let title: String
-    let region: String
-    let travelStartDate: String
-    let travelEndDate: String
-    let genre: String
-    let withLyrics: Bool
-    let vocalGender: String
-    let regenerateMusic: Bool
-    let comment: String
-}
-
 // MARK: - AlbumService
 
 final class AlbumService: AlbumServiceProtocol {
@@ -225,69 +213,52 @@ final class AlbumService: AlbumServiceProtocol {
         return try await apiClient.request(endpoint)
     }
     
-    // 커버 이미지 + 앨범 정보: multipart/form-data로 전송해 앨범 수정
+    // 앨범 정보 수정 + (사진 변경 시) 커버 교체
+    // - 새 커버 업로드 -> 앨범 정보 변경 -> 이전 커버 삭제 순서로 진행해 커버가 비는 상태 방지
+    // - 음악 재생성은 음악 생성 처리와 연결되기 전까지 지원하지 않음
     func updateAlbum(albumId: String, request: AlbumUpdateRequest) async throws {
-        let body = AlbumUpdateRequestBody(
+        guard !request.regenerateMusic else {
+            throw AlbumError.unknown
+        }
+
+        var newCoverPath: String?
+        var oldCoverPath: String?
+        if let photoData = request.photoData {
+            let memberId = try await supabase.auth.session.user.id
+            oldCoverPath = try await fetchCoverImagePath(albumId: albumId)
+            newCoverPath = try await storage.uploadImage(photoData, bucket: .covers, memberId: memberId)
+        }
+
+        let payload = AlbumUpdatePayload(
             title: request.title,
             region: request.location,
             travelStartDate: Self.dateFormatter.string(from: request.startDate),
             travelEndDate: Self.dateFormatter.string(from: request.endDate),
-            genre: request.genre.serverValue(for: request.lyricsOption),
-            withLyrics: request.lyricsOption == .include,
-            // 가사 없음(nil): vocalGender: "N", 가사 있음: "M"/"F"
-            vocalGender: request.vocalGender?.serverValue ?? "N",
-            regenerateMusic: request.regenerateMusic,
-            comment: request.comment
+            comment: request.comment,
+            coverImagePath: newCoverPath
         )
-        var formData = MultipartFormData()
-        try formData.append(name: "request", encodable: body)
-        if let photoData = request.photoData {
-            formData.append(name: "coverImage", imageData: photoData)
-        }
-
-        let endpoint = APIEndpoint(path: "/api/v1/albums/\(albumId)", method: .put)
-        #if DEBUG
-        print(
-            """
-            [AlbumUpdate][Request] albumId=\(albumId)
-            - title: \(body.title)
-            - region: \(body.region)
-            - travelStartDate: \(body.travelStartDate)
-            - travelEndDate: \(body.travelEndDate)
-            - genre: \(body.genre)
-            - withLyrics: \(body.withLyrics)
-            - vocalGender: \(body.vocalGender)
-            - regenerateMusic: \(body.regenerateMusic)
-            - comment: \(body.comment)
-            - coverImageIncluded: \(request.photoData != nil)
-            - coverImageBytes: \(request.photoData?.count ?? 0)
-            """
-        )
-        #endif
 
         do {
-            try await apiClient.performUpload(endpoint, formData: formData)
-            #if DEBUG
-            print("[AlbumUpdate][Response] SUCCESS albumId=\(albumId)")
-            #endif
-        } catch APIClientError.serverError(let code) {
-            #if DEBUG
-            print("[AlbumUpdate][Response] ERROR albumId=\(albumId) serverError=\(code.rawValue)")
-            #endif
-            throw APIClientError.serverError(code)
-        } catch APIClientError.networkError(let urlError) {
-            #if DEBUG
-            print("[AlbumUpdate][Response] ERROR albumId=\(albumId) networkError=\(urlError.code.rawValue)")
-            #endif
-            throw APIClientError.networkError(urlError)
+            // 변경된 행을 1건 반환받아 본인 앨범이 아닌 경우(RLS로 0건) 실패 처리
+            try await supabase.from(Table.album)
+                .update(payload)
+                .eq("id", value: albumId)
+                .select("id")
+                .single()
+                .execute()
         } catch {
-            #if DEBUG
-            print("[AlbumUpdate][Response] ERROR albumId=\(albumId) unknown=\(error)")
-            #endif
+            // 앨범 정보 변경 실패 시 새로 올린 커버는 사용되지 않으므로 정리
+            if let newCoverPath {
+                await storage.removeFiles(bucket: .covers, paths: [newCoverPath])
+            }
             throw error
         }
+
+        if let oldCoverPath {
+            await storage.removeFiles(bucket: .covers, paths: [oldCoverPath])
+        }
     }
-    
+
     func deleteAlbum(albumId: String) async throws {
         let endpoint = APIEndpoint(path: "/api/v1/albums/\(albumId)", method: .delete)
         try await apiClient.perform(endpoint)
@@ -344,6 +315,19 @@ final class AlbumService: AlbumServiceProtocol {
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
+
+    // MARK: - Private
+
+    // 앨범의 현재 커버 이미지 경로 조회
+    private func fetchCoverImagePath(albumId: String) async throws -> String {
+        let row: AlbumCoverRow = try await supabase.from(Table.album)
+            .select("cover_image_path")
+            .eq("id", value: albumId)
+            .single()
+            .execute()
+            .value
+        return row.coverImagePath
+    }
 
     // MARK: - Mapping
 
@@ -461,6 +445,15 @@ private nonisolated struct AlbumDetailRow: Decodable {
     }
 }
 
+// 앨범 커버 경로 조회 결과
+private nonisolated struct AlbumCoverRow: Decodable {
+    let coverImagePath: String
+
+    enum CodingKeys: String, CodingKey {
+        case coverImagePath = "cover_image_path"
+    }
+}
+
 // 앨범 음악 조회 결과 (album_music)
 private nonisolated struct AlbumMusicRow: Decodable {
     let genre: String
@@ -474,6 +467,25 @@ private nonisolated struct AlbumMusicRow: Decodable {
         case withLyrics = "with_lyrics"
         case vocalGender = "vocal_gender"
         case musicPath = "music_path"
+    }
+}
+
+// MARK: - Supabase Payload
+
+// 앨범 정보 수정 (커버 미변경 시 coverImagePath 생략)
+private nonisolated struct AlbumUpdatePayload: Encodable {
+    let title: String
+    let region: String
+    let travelStartDate: String
+    let travelEndDate: String
+    let comment: String
+    let coverImagePath: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title, region, comment
+        case travelStartDate = "travel_start_date"
+        case travelEndDate = "travel_end_date"
+        case coverImagePath = "cover_image_path"
     }
 }
 
