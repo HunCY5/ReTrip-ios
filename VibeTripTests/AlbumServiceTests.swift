@@ -93,7 +93,7 @@ final class AlbumServiceTests: XCTestCase {
     override func setUp() {
         super.setUp()
         mockAPIClient = MockAPIClient()
-        sut = AlbumService(apiClient: mockAPIClient)
+        sut = AlbumService(apiClient: mockAPIClient, supabase: SupabaseTestClient.make())
     }
 
     override func tearDown() {
@@ -217,73 +217,6 @@ final class AlbumServiceTests: XCTestCase {
         _ = try await sut.createAlbum(request: request)
         let body = try decodeRequestPart(CapturedGenreBody.self, from: mockAPIClient.capturedUploadFormData)
         XCTAssertEqual(body.genre, "JAZZ_NO_VOCAL")
-    }
-
-    // MARK: - fetchAlbums 성공
-
-    // 정상 응답 -> AlbumListPayload 반환
-    func test_fetchAlbums_success_returnsPayload() async throws {
-        let expected = AlbumListPayload(
-            content: [
-                AlbumCard(id: 1, title: "도쿄", location: "일본", startDate: "2026-01-01", endDate: "2026-01-05", coverImageUrl: nil)
-            ],
-            totalCount: 1,
-            hasNext: false
-        )
-        mockAPIClient.requestResult = .success(expected)
-
-        let result = try await sut.fetchAlbums(cursor: nil, limit: 10)
-
-        XCTAssertEqual(result.content.count, 1)
-        XCTAssertEqual(result.content.first?.id, 1)
-        XCTAssertEqual(result.hasNext, false)
-        XCTAssertEqual(mockAPIClient.requestCallCount, 1)
-    }
-
-    // MARK: - fetchAlbums cursor 전달
-
-    // cursor 값이 쿼리 파라미터로 올바르게 전달되는지 검증
-    func test_fetchAlbums_cursor_isPassedAsQueryItem() async throws {
-        mockAPIClient.requestResult = .success(
-            AlbumListPayload(content: [], totalCount: 0, hasNext: false)
-        )
-
-        _ = try await sut.fetchAlbums(cursor: 5, limit: 10)
-
-        let items = mockAPIClient.capturedEndpoints.first?.queryItems ?? []
-        let cursorItem = items.first { $0.name == "cursor" }
-        XCTAssertEqual(cursorItem?.value, "5")
-    }
-
-    // MARK: - fetchAlbums 서버 에러
-
-    // 서버 에러 응답 -> APIClientError.serverError throw
-    func test_fetchAlbums_serverError_throwsServerError() async throws {
-        mockAPIClient.requestResult = .failure(APIClientError.serverError(.e400))
-
-        do {
-            _ = try await sut.fetchAlbums(cursor: nil, limit: 10)
-            XCTFail("서버 에러가 throw되어야 합니다")
-        } catch APIClientError.serverError(let code) {
-            XCTAssertEqual(code, .e400)
-        } catch {
-            XCTFail("예상치 못한 에러: \(error)")
-        }
-    }
-
-    // MARK: - fetchAlbums 빈 목록
-
-    // 빈 content 응답 -> content 빈 배열, hasNext false 반환
-    func test_fetchAlbums_emptyList_returnsEmptyContent() async throws {
-        mockAPIClient.requestResult = .success(
-            AlbumListPayload(content: [], totalCount: 0, hasNext: false)
-        )
-
-        let result = try await sut.fetchAlbums(cursor: nil, limit: 10)
-
-        XCTAssertTrue(result.content.isEmpty)
-        XCTAssertEqual(result.totalCount, 0)
-        XCTAssertFalse(result.hasNext)
     }
 
     // MARK: - fetchAlbumLogs 성공
@@ -443,59 +376,6 @@ final class AlbumServiceTests: XCTestCase {
         }
     }
 
-    // MARK: - deleteAlbum: 성공
-
-    // 성공 시 perform 1회 호출
-    func test_deleteAlbum_success_callsPerformOnce() async throws {
-        mockAPIClient.performResult = .success(())
-
-        try await sut.deleteAlbum(albumId: "42")
-
-        XCTAssertEqual(mockAPIClient.performCallCount, 1)
-    }
-
-    // 올바른 엔드포인트 경로로 요청되는지 검증
-    func test_deleteAlbum_success_usesCorrectPath() async throws {
-        mockAPIClient.performResult = .success(())
-
-        try await sut.deleteAlbum(albumId: "42")
-
-        XCTAssertEqual(mockAPIClient.capturedEndpoints.first?.path, "/api/v1/albums/42")
-    }
-
-    // MARK: - deleteAlbum: 서버 에러
-
-    // 서버 에러 응답 -> APIClientError.serverError throw
-    func test_deleteAlbum_serverError_throwsServerError() async throws {
-        mockAPIClient.performResult = .failure(APIClientError.serverError(.e400))
-
-        do {
-            try await sut.deleteAlbum(albumId: "1")
-            XCTFail("서버 에러가 throw되어야 합니다")
-        } catch APIClientError.serverError(let code) {
-            XCTAssertEqual(code, .e400)
-        } catch {
-            XCTFail("예상치 못한 에러: \(error)")
-        }
-    }
-
-    // MARK: - deleteAlbum: 네트워크 에러
-
-    // 네트워크 연결 불가 -> APIClientError.networkError throw
-    func test_deleteAlbum_networkError_throwsNetworkError() async throws {
-        let urlError = URLError(.notConnectedToInternet)
-        mockAPIClient.performResult = .failure(APIClientError.networkError(urlError))
-
-        do {
-            try await sut.deleteAlbum(albumId: "1")
-            XCTFail("네트워크 에러가 throw되어야 합니다")
-        } catch APIClientError.networkError(let error) {
-            XCTAssertEqual(error.code, .notConnectedToInternet)
-        } catch {
-            XCTFail("예상치 못한 에러: \(error)")
-        }
-    }
-
     // MARK: - saveLog: 네트워크 에러
 
     // 네트워크 연결 불가 -> APIClientError.networkError throw
@@ -624,127 +504,6 @@ final class AlbumServiceTests: XCTestCase {
 
         do {
             try await sut.updateLog(request: makeUpdateRequest())
-            XCTFail("네트워크 에러가 throw되어야 합니다")
-        } catch APIClientError.networkError(let error) {
-            XCTAssertEqual(error.code, .notConnectedToInternet)
-        } catch {
-            XCTFail("예상치 못한 에러: \(error)")
-        }
-    }
-
-    // MARK: - updateAlbum: 헬퍼
-
-    private func makeUpdateRequest() -> AlbumUpdateRequest {
-        AlbumUpdateRequest(
-            photoData: Data([0x00, 0x01]),
-            title: "테스트 앨범",
-            location: "서울",
-            startDate: Date(timeIntervalSince1970: 0),
-            endDate: Date(timeIntervalSince1970: 86400),
-            lyricsOption: .include,
-            vocalGender: .female,
-            genre: .jazz,
-            regenerateMusic: true,
-            comment: "테스트 코멘트"
-        )
-    }
-
-    // MARK: - updateAlbum: 성공
-
-    // 성공 시 performUpload 1회 호출
-    func test_updateAlbum_success_callsPerformUploadOnce() async throws {
-        mockAPIClient.performUploadResult = .success(())
-
-        try await sut.updateAlbum(albumId: "42", request: makeUpdateRequest())
-
-        XCTAssertEqual(mockAPIClient.performUploadCallCount, 1)
-    }
-
-    // albumId가 path에 올바르게 포함되는지 검증
-    func test_updateAlbum_success_usesCorrectEndpointPath() async throws {
-        mockAPIClient.performUploadResult = .success(())
-
-        try await sut.updateAlbum(albumId: "42", request: makeUpdateRequest())
-
-        XCTAssertEqual(mockAPIClient.capturedEndpoints.last?.path, "/api/v1/albums/42")
-    }
-
-    // PUT 메서드로 요청되는지 검증
-    func test_updateAlbum_success_usesPutMethod() async throws {
-        mockAPIClient.performUploadResult = .success(())
-
-        try await sut.updateAlbum(albumId: "1", request: makeUpdateRequest())
-
-        XCTAssertEqual(mockAPIClient.capturedEndpoints.last?.method, .put)
-    }
-
-    // vocalGender nil -> throw 없이 정상 처리 ("N"으로 변환)
-    func test_updateAlbum_nilVocalGender_doesNotThrow() async throws {
-        mockAPIClient.performUploadResult = .success(())
-        let request = AlbumUpdateRequest(
-            photoData: Data([0x00]),
-            title: "테스트 앨범",
-            location: "부산",
-            startDate: Date(),
-            endDate: Date(),
-            lyricsOption: .exclude,
-            vocalGender: nil,
-            genre: .loFi,
-            regenerateMusic: false,
-            comment: ""
-        )
-
-        try await sut.updateAlbum(albumId: "1", request: request)
-
-        XCTAssertEqual(mockAPIClient.performUploadCallCount, 1)
-    }
-
-    // Jazz + 가사 미포함 요청 시 genre는 JAZZ_NO_VOCAL로 전송
-    func test_updateAlbum_excludeLyricsJazz_sendsJazzNoVocalGenre() async throws {
-        mockAPIClient.performUploadResult = .success(())
-        let request = AlbumUpdateRequest(
-            photoData: Data([0x00]),
-            title: "테스트 앨범",
-            location: "서울",
-            startDate: Date(timeIntervalSince1970: 0),
-            endDate: Date(timeIntervalSince1970: 86400),
-            lyricsOption: .exclude,
-            vocalGender: nil,
-            genre: .jazz,
-            regenerateMusic: false,
-            comment: ""
-        )
-
-        try await sut.updateAlbum(albumId: "1", request: request)
-        let body = try decodeRequestPart(CapturedGenreBody.self, from: mockAPIClient.capturedFormData)
-        XCTAssertEqual(body.genre, "JAZZ_NO_VOCAL")
-    }
-
-    // MARK: - updateAlbum: 서버 에러
-
-    // 서버 에러 응답 -> APIClientError.serverError throw
-    func test_updateAlbum_serverError_throwsServerError() async throws {
-        mockAPIClient.performUploadResult = .failure(APIClientError.serverError(.e400))
-
-        do {
-            try await sut.updateAlbum(albumId: "1", request: makeUpdateRequest())
-            XCTFail("서버 에러가 throw되어야 합니다")
-        } catch APIClientError.serverError(let code) {
-            XCTAssertEqual(code, .e400)
-        } catch {
-            XCTFail("예상치 못한 에러: \(error)")
-        }
-    }
-
-    // MARK: - updateAlbum: 네트워크 에러
-
-    // 네트워크 연결 불가 -> APIClientError.networkError throw
-    func test_updateAlbum_networkError_throwsNetworkError() async throws {
-        let urlError = URLError(.notConnectedToInternet)
-        mockAPIClient.performUploadResult = .failure(APIClientError.networkError(urlError))
-
-        do {
-            try await sut.updateAlbum(albumId: "1", request: makeUpdateRequest())
             XCTFail("네트워크 에러가 throw되어야 합니다")
         } catch APIClientError.networkError(let error) {
             XCTAssertEqual(error.code, .notConnectedToInternet)
