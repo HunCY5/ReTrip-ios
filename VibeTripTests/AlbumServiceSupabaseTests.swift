@@ -21,12 +21,10 @@ final class AlbumServiceSupabaseTests: XCTestCase {
         static let pageLimit = 2
         static let cursor = 5
         static let albumId = 42
-        static let sessionLifetime: TimeInterval = 3600
         static let storagePublicPrefix = "https://test.supabase.co/storage/v1/object/public"
     }
 
     private enum Path {
-        static let user = "/auth/v1/user"
         static let albumCardView = "/rest/v1/album_card_view"
         static let album = "/rest/v1/album"
         static let coversObjectPrefix = "/storage/v1/object/covers/"
@@ -70,7 +68,7 @@ final class AlbumServiceSupabaseTests: XCTestCase {
         ]
         """
         SupabaseStubURLProtocol.handler = { request in
-            Self.response(json, headers: ["Content-Range": "0-1/2"], for: request)
+            SupabaseStub.response(json, headers: ["Content-Range": "0-1/2"], for: request)
         }
 
         let result = try await sut.fetchAlbums(cursor: nil, limit: Constants.pageLimit)
@@ -100,7 +98,7 @@ final class AlbumServiceSupabaseTests: XCTestCase {
     // limit보다 1개 더 조회되면 다음 페이지 있음 + limit 개수만 반환
     func test_fetchAlbums_extraRow_setsHasNextAndTrims() async throws {
         let json = "[\(Self.cardJSON(id: 9)),\(Self.cardJSON(id: 8)),\(Self.cardJSON(id: 7))]"
-        SupabaseStubURLProtocol.handler = { Self.response(json, for: $0) }
+        SupabaseStubURLProtocol.handler = { SupabaseStub.response(json, for: $0) }
 
         let result = try await sut.fetchAlbums(cursor: nil, limit: Constants.pageLimit)
 
@@ -110,32 +108,32 @@ final class AlbumServiceSupabaseTests: XCTestCase {
 
     // cursor -> 해당 id보다 작은 앨범만, 최신순, limit + 1개 요청
     func test_fetchAlbums_cursor_buildsQuery() async throws {
-        SupabaseStubURLProtocol.handler = { Self.response("[]", for: $0) }
+        SupabaseStubURLProtocol.handler = { SupabaseStub.response("[]", for: $0) }
 
         _ = try await sut.fetchAlbums(cursor: Constants.cursor, limit: Constants.pageLimit)
 
         let request = try XCTUnwrap(SupabaseStubURLProtocol.capturedRequests.last)
         XCTAssertEqual(request.url?.path, Path.albumCardView)
-        XCTAssertEqual(Self.queryValue("id", in: request), "lt.\(Constants.cursor)")
-        XCTAssertEqual(Self.queryValue("order", in: request)?.hasPrefix("id.desc"), true)
-        XCTAssertEqual(Self.queryValue("limit", in: request), String(Constants.pageLimit + 1))
+        XCTAssertEqual(SupabaseStub.queryValue("id", in: request), "lt.\(Constants.cursor)")
+        XCTAssertEqual(SupabaseStub.queryValue("order", in: request)?.hasPrefix("id.desc"), true)
+        XCTAssertEqual(SupabaseStub.queryValue("limit", in: request), String(Constants.pageLimit + 1))
     }
 
     // 첫 페이지는 id 조건 없이 조회
     func test_fetchAlbums_withoutCursor_hasNoIdFilter() async throws {
-        SupabaseStubURLProtocol.handler = { Self.response("[]", for: $0) }
+        SupabaseStubURLProtocol.handler = { SupabaseStub.response("[]", for: $0) }
 
         let result = try await sut.fetchAlbums(cursor: nil, limit: Constants.pageLimit)
 
         let request = try XCTUnwrap(SupabaseStubURLProtocol.capturedRequests.last)
-        XCTAssertNil(Self.queryValue("id", in: request))
+        XCTAssertNil(SupabaseStub.queryValue("id", in: request))
         XCTAssertTrue(result.content.isEmpty)
         XCTAssertFalse(result.hasNext)
     }
 
     // 서버 오류 -> throw
     func test_fetchAlbums_serverError_throws() async {
-        SupabaseStubURLProtocol.handler = { Self.response(Self.errorJSON, statusCode: 500, for: $0) }
+        SupabaseStubURLProtocol.handler = { SupabaseStub.response(Self.errorJSON, statusCode: 500, for: $0) }
 
         do {
             _ = try await sut.fetchAlbums(cursor: nil, limit: Constants.pageLimit)
@@ -150,13 +148,13 @@ final class AlbumServiceSupabaseTests: XCTestCase {
         let json = Self.detailJSON(music: """
         {"genre":"K_POP","with_lyrics":true,"vocal_gender":"F","status":"COMPLETED","music_path":"\(Constants.memberId)/song.mp3"}
         """)
-        SupabaseStubURLProtocol.handler = { Self.response(json, for: $0) }
+        SupabaseStubURLProtocol.handler = { SupabaseStub.response(json, for: $0) }
 
         let detail = try await sut.fetchAlbum(albumId: Constants.albumId)
 
         let request = try XCTUnwrap(SupabaseStubURLProtocol.capturedRequests.last)
         XCTAssertEqual(request.url?.path, Path.album)
-        XCTAssertEqual(Self.queryValue("id", in: request), "eq.\(Constants.albumId)")
+        XCTAssertEqual(SupabaseStub.queryValue("id", in: request), "eq.\(Constants.albumId)")
         XCTAssertEqual(detail.title, "오사카의 밤")
         XCTAssertEqual(detail.region, "일본 오사카")
         XCTAssertEqual(detail.travelStartDate, "2026-01-12")
@@ -174,7 +172,7 @@ final class AlbumServiceSupabaseTests: XCTestCase {
         let json = Self.detailJSON(music: """
         {"genre":"LO_FI","with_lyrics":false,"vocal_gender":"N","status":"CREATING","music_path":null}
         """)
-        SupabaseStubURLProtocol.handler = { Self.response(json, for: $0) }
+        SupabaseStubURLProtocol.handler = { SupabaseStub.response(json, for: $0) }
 
         let detail = try await sut.fetchAlbum(albumId: Constants.albumId)
 
@@ -189,7 +187,7 @@ final class AlbumServiceSupabaseTests: XCTestCase {
         let json = Self.detailJSON(music: """
         {"genre":"JAZZ_NO_VOCAL","with_lyrics":false,"vocal_gender":"N","status":"COMPLETED","music_path":"\(Constants.memberId)/song.mp3"}
         """)
-        SupabaseStubURLProtocol.handler = { Self.response(json, for: $0) }
+        SupabaseStubURLProtocol.handler = { SupabaseStub.response(json, for: $0) }
 
         let detail = try await sut.fetchAlbum(albumId: Constants.albumId)
 
@@ -199,7 +197,7 @@ final class AlbumServiceSupabaseTests: XCTestCase {
 
     // 음악 정보 없음 -> 재생 URL·장르 없음
     func test_fetchAlbum_withoutMusic_hasNoMusicInfo() async throws {
-        SupabaseStubURLProtocol.handler = { Self.response(Self.detailJSON(music: "null"), for: $0) }
+        SupabaseStubURLProtocol.handler = { SupabaseStub.response(Self.detailJSON(music: "null"), for: $0) }
 
         let detail = try await sut.fetchAlbum(albumId: Constants.albumId)
 
@@ -210,7 +208,7 @@ final class AlbumServiceSupabaseTests: XCTestCase {
 
     // 조회 결과 없음(본인 앨범 아님 등) -> throw
     func test_fetchAlbum_notFound_throws() async {
-        SupabaseStubURLProtocol.handler = { Self.response(Self.notFoundJSON, statusCode: 406, for: $0) }
+        SupabaseStubURLProtocol.handler = { SupabaseStub.response(Self.notFoundJSON, statusCode: 406, for: $0) }
 
         do {
             _ = try await sut.fetchAlbum(albumId: Constants.albumId)
@@ -224,7 +222,7 @@ final class AlbumServiceSupabaseTests: XCTestCase {
     func test_updateAlbum_withoutPhoto_updatesFieldsOnly() async throws {
         SupabaseStubURLProtocol.handler = { request in
             if request.httpMethod == "PATCH" {
-                return Self.response(#"{"id":42}"#, for: request)
+                return SupabaseStub.response(#"{"id":42}"#, for: request)
             }
             throw URLError(.badServerResponse)
         }
@@ -235,9 +233,9 @@ final class AlbumServiceSupabaseTests: XCTestCase {
         XCTAssertEqual(requests.count, 1)
         let patch = try XCTUnwrap(requests.first)
         XCTAssertEqual(patch.url?.path, Path.album)
-        XCTAssertEqual(Self.queryValue("id", in: patch), "eq.\(Constants.albumId)")
+        XCTAssertEqual(SupabaseStub.queryValue("id", in: patch), "eq.\(Constants.albumId)")
 
-        let body = try Self.jsonBody(of: patch)
+        let body = try SupabaseStub.jsonBody(of: patch)
         XCTAssertEqual(body["title"] as? String, "오사카의 밤")
         XCTAssertEqual(body["region"] as? String, "일본 오사카")
         XCTAssertEqual(body["comment"] as? String, "즐거운 여행")
@@ -248,19 +246,19 @@ final class AlbumServiceSupabaseTests: XCTestCase {
 
     // 사진 변경 -> 본인 폴더에 새 커버 업로드, 경로 변경 후 이전 커버 삭제
     func test_updateAlbum_withPhoto_replacesCover() async throws {
-        try await signIn()
+        try await SupabaseStub.signIn(client, memberId: Constants.memberId)
         let oldCoverPath = "\(Constants.memberId)/old.jpg"
         SupabaseStubURLProtocol.handler = { request in
             let path = request.url?.path ?? ""
             switch (request.httpMethod, path) {
             case ("GET", Path.album):
-                return Self.response(#"{"cover_image_path":"\#(oldCoverPath)"}"#, for: request)
+                return SupabaseStub.response(#"{"cover_image_path":"\#(oldCoverPath)"}"#, for: request)
             case ("POST", _) where path.hasPrefix(Path.coversObjectPrefix):
-                return Self.response(#"{"Key":"covers/new.jpg","Id":"1"}"#, for: request)
+                return SupabaseStub.response(#"{"Key":"covers/new.jpg","Id":"1"}"#, for: request)
             case ("PATCH", Path.album):
-                return Self.response(#"{"id":42}"#, for: request)
+                return SupabaseStub.response(#"{"id":42}"#, for: request)
             case ("DELETE", Path.removeCovers):
-                return Self.response("[]", for: request)
+                return SupabaseStub.response("[]", for: request)
             default:
                 throw URLError(.badServerResponse)
             }
@@ -278,26 +276,26 @@ final class AlbumServiceSupabaseTests: XCTestCase {
         XCTAssertTrue(uploadedPath.hasSuffix(".jpg"))
 
         let patch = try XCTUnwrap(requests.first { $0.httpMethod == "PATCH" })
-        XCTAssertEqual(try Self.jsonBody(of: patch)["cover_image_path"] as? String, uploadedPath)
+        XCTAssertEqual(try SupabaseStub.jsonBody(of: patch)["cover_image_path"] as? String, uploadedPath)
 
         let remove = try XCTUnwrap(requests.first { $0.httpMethod == "DELETE" })
-        XCTAssertEqual(try Self.removedPaths(of: remove), [oldCoverPath])
+        XCTAssertEqual(try SupabaseStub.removedPaths(of: remove), [oldCoverPath])
     }
 
     // 정보 변경 실패 -> 새로 올린 커버 정리 후 throw
     func test_updateAlbum_updateFails_removesUploadedCover() async throws {
-        try await signIn()
+        try await SupabaseStub.signIn(client, memberId: Constants.memberId)
         SupabaseStubURLProtocol.handler = { request in
             let path = request.url?.path ?? ""
             switch (request.httpMethod, path) {
             case ("GET", Path.album):
-                return Self.response(#"{"cover_image_path":"old.jpg"}"#, for: request)
+                return SupabaseStub.response(#"{"cover_image_path":"old.jpg"}"#, for: request)
             case ("POST", _) where path.hasPrefix(Path.coversObjectPrefix):
-                return Self.response(#"{"Key":"covers/new.jpg","Id":"1"}"#, for: request)
+                return SupabaseStub.response(#"{"Key":"covers/new.jpg","Id":"1"}"#, for: request)
             case ("PATCH", Path.album):
-                return Self.response(Self.errorJSON, statusCode: 500, for: request)
+                return SupabaseStub.response(Self.errorJSON, statusCode: 500, for: request)
             case ("DELETE", Path.removeCovers):
-                return Self.response("[]", for: request)
+                return SupabaseStub.response("[]", for: request)
             default:
                 throw URLError(.badServerResponse)
             }
@@ -315,7 +313,7 @@ final class AlbumServiceSupabaseTests: XCTestCase {
         let upload = try XCTUnwrap(requests.first { $0.httpMethod == "POST" })
         let uploadedPath = String(try XCTUnwrap(upload.url?.path.dropFirst(Path.coversObjectPrefix.count)))
         let remove = try XCTUnwrap(requests.first { $0.httpMethod == "DELETE" })
-        XCTAssertEqual(try Self.removedPaths(of: remove), [uploadedPath])
+        XCTAssertEqual(try SupabaseStub.removedPaths(of: remove), [uploadedPath])
     }
 
     // 음악 재생성 요청 -> 요청 없이 throw
@@ -333,7 +331,7 @@ final class AlbumServiceSupabaseTests: XCTestCase {
 
     // 본인 앨범이 아니어서 변경된 행이 없음 -> throw
     func test_updateAlbum_noRowUpdated_throws() async {
-        SupabaseStubURLProtocol.handler = { Self.response(Self.notFoundJSON, statusCode: 406, for: $0) }
+        SupabaseStubURLProtocol.handler = { SupabaseStub.response(Self.notFoundJSON, statusCode: 406, for: $0) }
 
         do {
             try await sut.updateAlbum(albumId: String(Constants.albumId), request: Self.makeUpdateRequest(photoData: nil))
@@ -356,11 +354,11 @@ final class AlbumServiceSupabaseTests: XCTestCase {
         SupabaseStubURLProtocol.handler = { request in
             switch (request.httpMethod, request.url?.path ?? "") {
             case ("GET", Path.album):
-                return Self.response(filesJSON, for: request)
+                return SupabaseStub.response(filesJSON, for: request)
             case ("DELETE", Path.album):
-                return Self.response(#"{"id":42}"#, for: request)
+                return SupabaseStub.response(#"{"id":42}"#, for: request)
             case ("DELETE", _):
-                return Self.response("[]", for: request)
+                return SupabaseStub.response("[]", for: request)
             default:
                 throw URLError(.badServerResponse)
             }
@@ -370,12 +368,12 @@ final class AlbumServiceSupabaseTests: XCTestCase {
 
         let requests = SupabaseStubURLProtocol.capturedRequests
         let deleteRow = try XCTUnwrap(requests.first { $0.httpMethod == "DELETE" && $0.url?.path == Path.album })
-        XCTAssertEqual(Self.queryValue("id", in: deleteRow), "eq.\(Constants.albumId)")
+        XCTAssertEqual(SupabaseStub.queryValue("id", in: deleteRow), "eq.\(Constants.albumId)")
 
         let removals = try Dictionary(
             uniqueKeysWithValues: requests
                 .filter { $0.httpMethod == "DELETE" && $0.url?.path != Path.album }
-                .map { (try XCTUnwrap($0.url?.path), try Self.removedPaths(of: $0)) }
+                .map { (try XCTUnwrap($0.url?.path), try SupabaseStub.removedPaths(of: $0)) }
         )
         XCTAssertEqual(removals[Path.removeCovers], ["\(Constants.memberId)/cover.jpg"])
         XCTAssertEqual(removals[Path.removeLogImages], [
@@ -390,9 +388,9 @@ final class AlbumServiceSupabaseTests: XCTestCase {
         SupabaseStubURLProtocol.handler = { request in
             switch (request.httpMethod, request.url?.path ?? "") {
             case ("GET", Path.album):
-                return Self.response(filesJSON, for: request)
+                return SupabaseStub.response(filesJSON, for: request)
             case ("DELETE", _):
-                return Self.response(request.url?.path == Path.album ? #"{"id":42}"# : "[]", for: request)
+                return SupabaseStub.response(request.url?.path == Path.album ? #"{"id":42}"# : "[]", for: request)
             default:
                 throw URLError(.badServerResponse)
             }
@@ -411,9 +409,9 @@ final class AlbumServiceSupabaseTests: XCTestCase {
         SupabaseStubURLProtocol.handler = { request in
             switch (request.httpMethod, request.url?.path ?? "") {
             case ("GET", Path.album):
-                return Self.response(#"{"cover_image_path":"cover.jpg","album_music":null,"album_log":[]}"#, for: request)
+                return SupabaseStub.response(#"{"cover_image_path":"cover.jpg","album_music":null,"album_log":[]}"#, for: request)
             default:
-                return Self.response(Self.errorJSON, statusCode: 500, for: request)
+                return SupabaseStub.response(Self.errorJSON, statusCode: 500, for: request)
             }
         }
 
@@ -433,11 +431,11 @@ final class AlbumServiceSupabaseTests: XCTestCase {
         SupabaseStubURLProtocol.handler = { request in
             switch (request.httpMethod, request.url?.path ?? "") {
             case ("GET", Path.album):
-                return Self.response(#"{"cover_image_path":"cover.jpg","album_music":null,"album_log":[]}"#, for: request)
+                return SupabaseStub.response(#"{"cover_image_path":"cover.jpg","album_music":null,"album_log":[]}"#, for: request)
             case ("DELETE", Path.album):
-                return Self.response(#"{"id":42}"#, for: request)
+                return SupabaseStub.response(#"{"id":42}"#, for: request)
             default:
-                return Self.response(Self.errorJSON, statusCode: 500, for: request)
+                return SupabaseStub.response(Self.errorJSON, statusCode: 500, for: request)
             }
         }
 
@@ -477,84 +475,5 @@ final class AlbumServiceSupabaseTests: XCTestCase {
             regenerateMusic: regenerateMusic,
             comment: "즐거운 여행"
         )
-    }
-
-    // 업로드 경로 생성에 필요한 로그인 세션 등록 (사용자 조회 요청에 테스트 회원 반환)
-    private func signIn() async throws {
-        SupabaseStubURLProtocol.handler = { request in
-            guard request.url?.path == Path.user else { throw URLError(.badServerResponse) }
-            let json = """
-            {"id":"\(Constants.memberId)","aud":"authenticated","app_metadata":{},"user_metadata":{},
-             "created_at":"2026-11-24T00:00:00Z","updated_at":"2026-11-24T00:00:00Z"}
-            """
-            return Self.response(json, for: request)
-        }
-        _ = try await client.auth.setSession(accessToken: Self.makeAccessToken(), refreshToken: "refresh-token")
-        SupabaseStubURLProtocol.reset()
-    }
-
-    // 만료되지 않은 테스트용 액세스 토큰 (서명 검증 없음)
-    private static func makeAccessToken() -> String {
-        let exp = Int(Date().addingTimeInterval(Constants.sessionLifetime).timeIntervalSince1970)
-        let header = base64URL(#"{"alg":"HS256","typ":"JWT"}"#)
-        let payload = base64URL(#"{"sub":"\#(Constants.memberId)","exp":\#(exp)}"#)
-        return "\(header).\(payload).signature"
-    }
-
-    private static func base64URL(_ string: String) -> String {
-        Data(string.utf8).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-
-    private static func response(
-        _ json: String,
-        statusCode: Int = 200,
-        headers: [String: String] = [:],
-        for request: URLRequest
-    ) -> (HTTPURLResponse, Data) {
-        let response = HTTPURLResponse(
-            url: request.url!,
-            statusCode: statusCode,
-            httpVersion: nil,
-            headerFields: ["Content-Type": "application/json"].merging(headers) { $1 }
-        )!
-        return (response, Data(json.utf8))
-    }
-
-    private static func queryValue(_ name: String, in request: URLRequest) -> String? {
-        guard let url = request.url else { return nil }
-        return URLComponents(url: url, resolvingAgainstBaseURL: false)?
-            .queryItems?
-            .first { $0.name == name }?
-            .value
-    }
-
-    // URLProtocol로 전달된 요청 본문 (httpBody 또는 스트림)
-    private static func body(of request: URLRequest) -> Data? {
-        if let body = request.httpBody { return body }
-        guard let stream = request.httpBodyStream else { return nil }
-        stream.open()
-        defer { stream.close() }
-        var data = Data()
-        let bufferSize = 1024
-        var buffer = [UInt8](repeating: 0, count: bufferSize)
-        while stream.hasBytesAvailable {
-            let read = stream.read(&buffer, maxLength: bufferSize)
-            guard read > 0 else { break }
-            data.append(buffer, count: read)
-        }
-        return data
-    }
-
-    private static func jsonBody(of request: URLRequest) throws -> [String: Any] {
-        let data = try XCTUnwrap(body(of: request))
-        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-    }
-
-    // 저장소 파일 삭제 요청의 대상 경로 목록
-    private static func removedPaths(of request: URLRequest) throws -> [String] {
-        try XCTUnwrap(jsonBody(of: request)["prefixes"] as? [String])
     }
 }
