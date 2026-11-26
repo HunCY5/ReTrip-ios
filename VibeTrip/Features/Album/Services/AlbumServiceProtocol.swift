@@ -55,10 +55,6 @@ struct AlbumCreateResponse: Decodable {
 // MARK: - AlbumCreateRequestBody
 
 // multipart request 파트
-private struct AlbumLogRegisterRequestBody: Encodable {
-    let description: String
-}
-
 private struct AlbumLogUpdateRequestBody: Encodable {
     let description: String
     let removeImageIds: [Int64]   // 삭제할 기존 이미지 ID 목록
@@ -85,6 +81,10 @@ final class AlbumService: AlbumServiceProtocol {
         static let albumCardView = "album_card_view"
         static let albumLog = "album_log"
         static let albumLogImage = "album_log_image"
+    }
+
+    private enum Function {
+        static let createAlbumLog = "create_album_log"
     }
 
     // 메인 화면 카드 표시에 필요한 컬럼
@@ -312,15 +312,31 @@ final class AlbumService: AlbumServiceProtocol {
         return makeAlbumDetail(from: row)
     }
 
+    // 로그 작성: 사진 업로드 -> 로그와 사진 정보 한 번에 추가
+    // - 사진은 선택한 순서대로 저장
+    // - 로그 추가 실패 시 올린 사진은 사용되지 않으므로 정리
     func saveLog(request: AlbumLogRequest) async throws {
-        let body = AlbumLogRegisterRequestBody(description: request.logText)
-        var formData = MultipartFormData()
-        try formData.append(name: "request", encodable: body)
-        for imageData in request.photoDataList {
-            formData.append(name: "images", imageData: imageData)
+        guard let albumId = Int(request.albumId) else {
+            throw AlbumError.unknown
         }
-        let endpoint = APIEndpoint(path: "/api/v1/albums/\(request.albumId)/album-logs", method: .post)
-        try await apiClient.performUpload(endpoint, formData: formData)
+        let memberId = try await supabase.auth.session.user.id
+        let imagePaths = try await storage.uploadImages(
+            request.photoDataList,
+            bucket: .logImages,
+            memberId: memberId
+        )
+
+        let params = CreateAlbumLogParams(
+            albumId: albumId,
+            description: request.logText,
+            imagePaths: imagePaths
+        )
+        do {
+            try await supabase.rpc(Function.createAlbumLog, params: params).execute()
+        } catch {
+            await storage.removeFiles(bucket: .logImages, paths: imagePaths)
+            throw error
+        }
     }
 
     func updateLog(request: AlbumLogUpdateRequest) async throws {
@@ -622,6 +638,19 @@ private nonisolated struct AlbumUpdatePayload: Encodable {
         case travelStartDate = "travel_start_date"
         case travelEndDate = "travel_end_date"
         case coverImagePath = "cover_image_path"
+    }
+}
+
+// 로그 작성 함수 인자 (create_album_log)
+private nonisolated struct CreateAlbumLogParams: Encodable {
+    let albumId: Int
+    let description: String
+    let imagePaths: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case albumId = "p_album_id"
+        case description = "p_description"
+        case imagePaths = "p_image_paths"
     }
 }
 
