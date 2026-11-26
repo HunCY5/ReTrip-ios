@@ -96,6 +96,8 @@ final class AlbumService: AlbumServiceProtocol {
     // 상세 화면 로그 피드 표시에 필요한 로그 + 사진 컬럼
     private static let albumLogColumns =
         "id,description,created_at,album_log_image(id,image_path)"
+    // 로그 삭제 시 정리할 사진 파일 경로
+    private static let albumLogFileColumns = "album_log_image(image_path)"
     // 다음 페이지 존재 여부 확인용 추가 조회 수
     private static let nextPageProbeCount = 1
 
@@ -366,12 +368,28 @@ final class AlbumService: AlbumServiceProtocol {
         await storage.removeFiles(bucket: .logImages, paths: removedImagePaths)
     }
 
+    // 로그 삭제 후 사진 파일 정리
+    // - 로그 행 삭제 시 사진 행은 DB에서 함께 삭제
+    // - 행이 사라지면 파일 경로를 알 수 없으므로 삭제 전에 경로를 먼저 수집
+    // - 파일 정리는 실패해도 로그 삭제는 성공으로 처리
     func deleteAlbumLog(albumId: String, albumLogId: Int) async throws {
-        let endpoint = APIEndpoint(
-            path: "/api/v1/albums/\(albumId)/album-logs/\(albumLogId)",
-            method: .delete
-        )
-        try await apiClient.perform(endpoint)
+        let files: AlbumFilesRow.LogImages = try await supabase.from(Table.albumLog)
+            .select(Self.albumLogFileColumns)
+            .eq("id", value: albumLogId)
+            .eq("album_id", value: albumId)
+            .single()
+            .execute()
+            .value
+
+        // 삭제된 행을 1건 반환받아 본인 로그가 아닌 경우(RLS로 0건) 실패 처리
+        try await supabase.from(Table.albumLog)
+            .delete()
+            .eq("id", value: albumLogId)
+            .select("id")
+            .single()
+            .execute()
+
+        await storage.removeFiles(bucket: .logImages, paths: files.albumLogImage.map(\.imagePath))
     }
 
     // 서버 요구 날짜 포맷
