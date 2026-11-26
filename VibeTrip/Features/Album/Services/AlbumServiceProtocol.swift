@@ -83,6 +83,8 @@ final class AlbumService: AlbumServiceProtocol {
     private enum Table {
         static let album = "album"
         static let albumCardView = "album_card_view"
+        static let albumLog = "album_log"
+        static let albumLogImage = "album_log_image"
     }
 
     // 메인 화면 카드 표시에 필요한 컬럼
@@ -95,6 +97,9 @@ final class AlbumService: AlbumServiceProtocol {
     // 앨범 삭제 시 정리할 파일 경로 (커버, 음악, 기록 이미지)
     private static let albumFileColumns =
         "cover_image_path,album_music(music_path),album_log(album_log_image(image_path))"
+    // 상세 화면 로그 피드 표시에 필요한 로그 + 사진 컬럼
+    private static let albumLogColumns =
+        "id,description,created_at,album_log_image(id,image_path)"
     // 다음 페이지 존재 여부 확인용 추가 조회 수
     private static let nextPageProbeCount = 1
 
@@ -201,19 +206,28 @@ final class AlbumService: AlbumServiceProtocol {
         fatalError("TODO: 로그 조회 API 엔드포인트 확인 후 구현")
     }
 
+    // 앨범의 최신 로그부터 조회 (RLS로 본인 로그만 반환)
+    // - cursor: 존재 -> 해당 로그 id보다 먼저 작성한 로그부터, 존재X -> 첫 페이지부터 조회
+    // - 로그별 사진은 추가한 순서대로 정렬
+    // - limit보다 1개 더 조회해 다음 페이지 존재 여부 판단
     func fetchAlbumLogs(albumId: String, cursor: Int?, limit: Int) async throws -> AlbumLogListPayload {
-        var queryItems: [URLQueryItem] = [
-            URLQueryItem(name: "limit", value: String(limit))
-        ]
+        var query = supabase.from(Table.albumLog)
+            .select(Self.albumLogColumns)
+            .eq("album_id", value: albumId)
         if let cursor {
-            queryItems.append(URLQueryItem(name: "cursor", value: String(cursor)))
+            query = query.lt("id", value: cursor)
         }
-        let endpoint = APIEndpoint(
-            path: "/api/v1/albums/\(albumId)/album-logs",
-            method: .get,
-            queryItems: queryItems
+        let rows: [AlbumLogRow] = try await query
+            .order("id", ascending: false)
+            .order("id", ascending: true, referencedTable: Table.albumLogImage)
+            .limit(limit + Self.nextPageProbeCount)
+            .execute()
+            .value
+
+        return AlbumLogListPayload(
+            content: rows.prefix(limit).map(makeAlbumLogEntry),
+            hasNext: rows.count > limit
         )
-        return try await apiClient.request(endpoint)
     }
     
     // 앨범 정보 수정 + (사진 변경 시) 커버 교체
@@ -389,6 +403,36 @@ final class AlbumService: AlbumServiceProtocol {
             comment: row.comment
         )
     }
+
+    // 조회 결과 -> 로그 피드 아이템 (사진 경로는 공개 URL로 변환)
+    private func makeAlbumLogEntry(from row: AlbumLogRow) -> AlbumLogEntry {
+        AlbumLogEntry(
+            id: row.id,
+            description: row.description,
+            postedAt: Self.makePostedAt(from: row.createdAt),
+            images: row.albumLogImage.compactMap { image in
+                storage.publicURL(bucket: .logImages, path: image.imagePath).map {
+                    AlbumLogImage(id: image.id, imageUrl: $0)
+                }
+            }
+        )
+    }
+
+    // DB 작성 시각 -> 초 단위 UTC ISO8601 문자열 (예: 2026-11-25T03:12:45Z)
+    // - DB 시각은 소수 초 자릿수가 일정하지 않아(최대 6자리) 기본 ISO8601 파싱이 실패하므로 소수 초 제거 후 변환
+    // - 변환 실패 시 원본 문자열 유지
+    private static func makePostedAt(from createdAt: String) -> String {
+        let withoutFraction = createdAt.replacingOccurrences(
+            of: #"\.\d+"#,
+            with: "",
+            options: .regularExpression
+        )
+        guard let date = postedAtFormatter.date(from: withoutFraction) else { return createdAt }
+        return postedAtFormatter.string(from: date)
+    }
+
+    // 로그 작성 시각 포맷 (UTC, 초 단위)
+    private static let postedAtFormatter = ISO8601DateFormatter()
 }
 
 // 음악 생성 상태 (DB music_status)
@@ -535,6 +579,30 @@ private nonisolated struct AlbumMusicRow: Decodable {
         case withLyrics = "with_lyrics"
         case vocalGender = "vocal_gender"
         case musicPath = "music_path"
+    }
+}
+
+// 앨범 로그 피드 조회 결과 (album_log + album_log_image)
+private nonisolated struct AlbumLogRow: Decodable {
+    let id: Int
+    let description: String
+    let createdAt: String
+    let albumLogImage: [ImageRow]
+
+    struct ImageRow: Decodable {
+        let id: Int64
+        let imagePath: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case imagePath = "image_path"
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, description
+        case createdAt = "created_at"
+        case albumLogImage = "album_log_image"
     }
 }
 
