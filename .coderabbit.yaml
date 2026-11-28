@@ -6,11 +6,19 @@ tone_instructions: "간결하고 구체적으로 작성하고, 문제 지점과 
 reviews:
   profile: chill
   high_level_summary: true
+  high_level_summary_in_walkthrough: true
   poem: false
+  in_progress_fortune: false
   review_status: true
+  review_info: false
   collapse_walkthrough: true
   sequence_diagrams: false
+  estimate_code_review_effort: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
   suggested_reviewers: false
+  enable_prompt_for_ai_agents: false
   path_filters:
     - "!**/*.pbxproj"
     - "!**/*.xcassets/**"
