@@ -63,6 +63,9 @@ private final class StubAlbumService: AlbumServiceProtocol {
 
 // MARK: - EditAlbumViewModelTests
 
+// 모든 테스트를 async로 작성
+// - iOS 18 런타임에서 MainActor 객체가 동기 테스트 본문 안에서 해제되면 isolated deinit 처리 중 크래시 발생
+// - async 테스트는 Task 안에서 해제되어 영향 없음
 @MainActor
 final class EditAlbumViewModelTests: XCTestCase {
 
@@ -103,21 +106,21 @@ final class EditAlbumViewModelTests: XCTestCase {
     // MARK: - isValid
 
     // 모든 필수 항목 입력 (가사 미포함) -> true
-    func test_isValid_allFilled_excludeLyrics_returnsTrue() {
+    func test_isValid_allFilled_excludeLyrics_returnsTrue() async {
         let sut = makeSUT()
         setupValidInput(sut, lyricsOption: .exclude)
         XCTAssertTrue(sut.isValid)
     }
 
     // 모든 필수 항목 입력 (가사 포함 + vocalGender 있음) -> true
-    func test_isValid_allFilled_includeLyricsWithGender_returnsTrue() {
+    func test_isValid_allFilled_includeLyricsWithGender_returnsTrue() async {
         let sut = makeSUT()
         setupValidInput(sut, lyricsOption: .include, vocalGender: .female)
         XCTAssertTrue(sut.isValid)
     }
 
     // 사진 미선택 (selectedImage nil, coverImageUrl nil) -> false
-    func test_isValid_noPhoto_returnsFalse() {
+    func test_isValid_noPhoto_returnsFalse() async {
         let sut = makeSUT()
         sut.destination = "서울"
         sut.hasDateSelected = true
@@ -127,7 +130,7 @@ final class EditAlbumViewModelTests: XCTestCase {
     }
 
     // 여행지 미입력 -> false
-    func test_isValid_emptyDestination_returnsFalse() {
+    func test_isValid_emptyDestination_returnsFalse() async {
         let sut = makeSUT()
         setupValidInput(sut)
         sut.destination = ""
@@ -135,7 +138,7 @@ final class EditAlbumViewModelTests: XCTestCase {
     }
 
     // 날짜 미선택 -> false
-    func test_isValid_dateNotSelected_returnsFalse() {
+    func test_isValid_dateNotSelected_returnsFalse() async {
         let sut = makeSUT()
         setupValidInput(sut)
         sut.hasDateSelected = false
@@ -143,7 +146,7 @@ final class EditAlbumViewModelTests: XCTestCase {
     }
 
     // 가사 포함인데 vocalGender 미선택 -> false
-    func test_isValid_includeLyricsNoGender_returnsFalse() {
+    func test_isValid_includeLyricsNoGender_returnsFalse() async {
         let sut = makeSUT()
         setupValidInput(sut, lyricsOption: .include, vocalGender: nil, regenerateMusic: true)
         XCTAssertFalse(sut.isValid)
@@ -169,7 +172,7 @@ final class EditAlbumViewModelTests: XCTestCase {
     }
 
     // selectedImage 설정 -> true (load 전후 무관)
-    func test_hasChanges_selectedImageSet_returnsTrue() {
+    func test_hasChanges_selectedImageSet_returnsTrue() async {
         let sut = makeSUT()
         sut.selectedImage = makeDummyImage()
         XCTAssertTrue(sut.hasChanges)

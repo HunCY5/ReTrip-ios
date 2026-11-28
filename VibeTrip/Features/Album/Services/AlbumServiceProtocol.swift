@@ -55,15 +55,6 @@ struct AlbumCreateResponse: Decodable {
 // MARK: - AlbumCreateRequestBody
 
 // multipart request 파트
-private struct AlbumLogRegisterRequestBody: Encodable {
-    let description: String
-}
-
-private struct AlbumLogUpdateRequestBody: Encodable {
-    let description: String
-    let removeImageIds: [Int64]   // 삭제할 기존 이미지 ID 목록
-}
-
 private struct AlbumCreateRequestBody: Encodable {
     let region: String
     let travelStartDate: String
@@ -83,6 +74,13 @@ final class AlbumService: AlbumServiceProtocol {
     private enum Table {
         static let album = "album"
         static let albumCardView = "album_card_view"
+        static let albumLog = "album_log"
+        static let albumLogImage = "album_log_image"
+    }
+
+    private enum Function {
+        static let createAlbumLog = "create_album_log"
+        static let updateAlbumLog = "update_album_log"
     }
 
     // 메인 화면 카드 표시에 필요한 컬럼
@@ -95,6 +93,11 @@ final class AlbumService: AlbumServiceProtocol {
     // 앨범 삭제 시 정리할 파일 경로 (커버, 음악, 기록 이미지)
     private static let albumFileColumns =
         "cover_image_path,album_music(music_path),album_log(album_log_image(image_path))"
+    // 상세 화면 로그 피드 표시에 필요한 로그 + 사진 컬럼
+    private static let albumLogColumns =
+        "id,description,created_at,album_log_image(id,image_path)"
+    // 로그 삭제 시 정리할 사진 파일 경로
+    private static let albumLogFileColumns = "album_log_image(image_path)"
     // 다음 페이지 존재 여부 확인용 추가 조회 수
     private static let nextPageProbeCount = 1
 
@@ -201,19 +204,28 @@ final class AlbumService: AlbumServiceProtocol {
         fatalError("TODO: 로그 조회 API 엔드포인트 확인 후 구현")
     }
 
+    // 앨범의 최신 로그부터 조회 (RLS로 본인 로그만 반환)
+    // - cursor: 존재 -> 해당 로그 id보다 먼저 작성한 로그부터, 존재X -> 첫 페이지부터 조회
+    // - 로그별 사진은 추가한 순서대로 정렬
+    // - limit보다 1개 더 조회해 다음 페이지 존재 여부 판단
     func fetchAlbumLogs(albumId: String, cursor: Int?, limit: Int) async throws -> AlbumLogListPayload {
-        var queryItems: [URLQueryItem] = [
-            URLQueryItem(name: "limit", value: String(limit))
-        ]
+        var query = supabase.from(Table.albumLog)
+            .select(Self.albumLogColumns)
+            .eq("album_id", value: albumId)
         if let cursor {
-            queryItems.append(URLQueryItem(name: "cursor", value: String(cursor)))
+            query = query.lt("id", value: cursor)
         }
-        let endpoint = APIEndpoint(
-            path: "/api/v1/albums/\(albumId)/album-logs",
-            method: .get,
-            queryItems: queryItems
+        let rows: [AlbumLogRow] = try await query
+            .order("id", ascending: false)
+            .order("id", ascending: true, referencedTable: Table.albumLogImage)
+            .limit(limit + Self.nextPageProbeCount)
+            .execute()
+            .value
+
+        return AlbumLogListPayload(
+            content: rows.prefix(limit).map(makeAlbumLogEntry),
+            hasNext: rows.count > limit
         )
-        return try await apiClient.request(endpoint)
     }
     
     // 앨범 정보 수정 + (사진 변경 시) 커버 교체
@@ -298,37 +310,99 @@ final class AlbumService: AlbumServiceProtocol {
         return makeAlbumDetail(from: row)
     }
 
+    // 로그 작성: 사진 업로드 -> 로그와 사진 정보 한 번에 추가
+    // - 사진은 선택한 순서대로 저장
+    // - DB가 로그 추가를 거절한 경우에만 올린 사진 정리
+    //   (응답을 받지 못한 경우는 이미 저장됐을 수 있어 사진이 깨지지 않도록 유지)
     func saveLog(request: AlbumLogRequest) async throws {
-        let body = AlbumLogRegisterRequestBody(description: request.logText)
-        var formData = MultipartFormData()
-        try formData.append(name: "request", encodable: body)
-        for imageData in request.photoDataList {
-            formData.append(name: "images", imageData: imageData)
+        guard let albumId = Int(request.albumId) else {
+            throw AlbumError.unknown
         }
-        let endpoint = APIEndpoint(path: "/api/v1/albums/\(request.albumId)/album-logs", method: .post)
-        try await apiClient.performUpload(endpoint, formData: formData)
+        let memberId = try await supabase.auth.session.user.id
+        let imagePaths = try await storage.uploadImages(
+            request.photoDataList,
+            bucket: .logImages,
+            memberId: memberId
+        )
+
+        let params = CreateAlbumLogParams(
+            albumId: albumId,
+            description: request.logText,
+            imagePaths: imagePaths
+        )
+        do {
+            try await supabase.rpc(Function.createAlbumLog, params: params).execute()
+        } catch {
+            if Self.isRejectedByDatabase(error) {
+                await storage.removeFiles(bucket: .logImages, paths: imagePaths)
+            }
+            throw error
+        }
     }
 
+    // 로그 수정: 새 사진 업로드 -> 텍스트·사진 정보 한 번에 변경 -> 삭제된 사진 파일 정리
+    // - 본인 로그가 아니면 변경 실패
+    // - DB가 로그 변경을 거절한 경우에만 새로 올린 사진 정리
+    //   (응답을 받지 못했거나 응답 해석에 실패한 경우는 이미 반영됐을 수 있어 유지)
+    // - 기존 사진 파일은 로그 변경이 확정된 뒤 정리 (정리 실패해도 수정은 성공 처리)
     func updateLog(request: AlbumLogUpdateRequest) async throws {
-        let body = AlbumLogUpdateRequestBody(description: request.logText, removeImageIds: request.removeImageIds)
-        var formData = MultipartFormData()
-        try formData.append(name: "request", encodable: body)
-        for imageData in request.newPhotoDataList {
-            formData.append(name: "newImages", imageData: imageData)
-        }
-        let endpoint = APIEndpoint(
-            path: "/api/v1/albums/\(request.albumId)/album-logs/\(request.albumLogId)",
-            method: .put
+        let memberId = try await supabase.auth.session.user.id
+        let newImagePaths = try await storage.uploadImages(
+            request.newPhotoDataList,
+            bucket: .logImages,
+            memberId: memberId
         )
-        try await apiClient.performUpload(endpoint, formData: formData)
+
+        let params = UpdateAlbumLogParams(
+            albumLogId: request.albumLogId,
+            description: request.logText,
+            removeImageIds: request.removeImageIds,
+            newImagePaths: newImagePaths
+        )
+        let removedImagePaths: [String]
+        do {
+            removedImagePaths = try await supabase.rpc(Function.updateAlbumLog, params: params)
+                .execute()
+                .value
+        } catch {
+            if Self.isRejectedByDatabase(error) {
+                await storage.removeFiles(bucket: .logImages, paths: newImagePaths)
+            }
+            throw error
+        }
+
+        await storage.removeFiles(bucket: .logImages, paths: removedImagePaths)
     }
 
+    // DB가 요청을 거절해 변경이 반영되지 않았음이 확실한지 판단
+    // - PostgREST 오류 응답: 요청 트랜잭션이 롤백됨 -> true
+    // - 네트워크 오류·게이트웨이 오류·응답 해석 실패: 반영 여부를 알 수 없음 -> false
+    private static func isRejectedByDatabase(_ error: Error) -> Bool {
+        error is PostgrestError
+    }
+
+    // 로그 삭제 후 사진 파일 정리
+    // - 로그 행 삭제 시 사진 행은 DB에서 함께 삭제
+    // - 행이 사라지면 파일 경로를 알 수 없으므로 삭제 전에 경로를 먼저 수집
+    // - 파일 정리는 실패해도 로그 삭제는 성공으로 처리
     func deleteAlbumLog(albumId: String, albumLogId: Int) async throws {
-        let endpoint = APIEndpoint(
-            path: "/api/v1/albums/\(albumId)/album-logs/\(albumLogId)",
-            method: .delete
-        )
-        try await apiClient.perform(endpoint)
+        let files: AlbumFilesRow.LogImages = try await supabase.from(Table.albumLog)
+            .select(Self.albumLogFileColumns)
+            .eq("id", value: albumLogId)
+            .eq("album_id", value: albumId)
+            .single()
+            .execute()
+            .value
+
+        // 삭제된 행을 1건 반환받아 본인 로그가 아닌 경우(RLS로 0건) 실패 처리
+        try await supabase.from(Table.albumLog)
+            .delete()
+            .eq("id", value: albumLogId)
+            .select("id")
+            .single()
+            .execute()
+
+        await storage.removeFiles(bucket: .logImages, paths: files.albumLogImage.map(\.imagePath))
     }
 
     // 서버 요구 날짜 포맷
@@ -389,6 +463,36 @@ final class AlbumService: AlbumServiceProtocol {
             comment: row.comment
         )
     }
+
+    // 조회 결과 -> 로그 피드 아이템 (사진 경로는 공개 URL로 변환)
+    private func makeAlbumLogEntry(from row: AlbumLogRow) -> AlbumLogEntry {
+        AlbumLogEntry(
+            id: row.id,
+            description: row.description,
+            postedAt: Self.makePostedAt(from: row.createdAt),
+            images: row.albumLogImage.compactMap { image in
+                storage.publicURL(bucket: .logImages, path: image.imagePath).map {
+                    AlbumLogImage(id: image.id, imageUrl: $0)
+                }
+            }
+        )
+    }
+
+    // DB 작성 시각 -> 초 단위 UTC ISO8601 문자열 (예: 2026-11-25T03:12:45Z)
+    // - DB 시각은 소수 초 자릿수가 일정하지 않아(최대 6자리) 기본 ISO8601 파싱이 실패하므로 소수 초 제거 후 변환
+    // - 변환 실패 시 원본 문자열 유지
+    private static func makePostedAt(from createdAt: String) -> String {
+        let withoutFraction = createdAt.replacingOccurrences(
+            of: #"\.\d+"#,
+            with: "",
+            options: .regularExpression
+        )
+        guard let date = postedAtFormatter.date(from: withoutFraction) else { return createdAt }
+        return postedAtFormatter.string(from: date)
+    }
+
+    // 로그 작성 시각 포맷 (UTC, 초 단위)
+    private static let postedAtFormatter = ISO8601DateFormatter()
 }
 
 // 음악 생성 상태 (DB music_status)
@@ -538,6 +642,30 @@ private nonisolated struct AlbumMusicRow: Decodable {
     }
 }
 
+// 앨범 로그 피드 조회 결과 (album_log + album_log_image)
+private nonisolated struct AlbumLogRow: Decodable {
+    let id: Int
+    let description: String
+    let createdAt: String
+    let albumLogImage: [ImageRow]
+
+    struct ImageRow: Decodable {
+        let id: Int64
+        let imagePath: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case imagePath = "image_path"
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, description
+        case createdAt = "created_at"
+        case albumLogImage = "album_log_image"
+    }
+}
+
 // MARK: - Supabase Payload
 
 // 앨범 정보 수정 (커버 미변경 시 coverImagePath 생략)
@@ -554,6 +682,34 @@ private nonisolated struct AlbumUpdatePayload: Encodable {
         case travelStartDate = "travel_start_date"
         case travelEndDate = "travel_end_date"
         case coverImagePath = "cover_image_path"
+    }
+}
+
+// 로그 작성 함수 인자 (create_album_log)
+private nonisolated struct CreateAlbumLogParams: Encodable {
+    let albumId: Int
+    let description: String
+    let imagePaths: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case albumId = "p_album_id"
+        case description = "p_description"
+        case imagePaths = "p_image_paths"
+    }
+}
+
+// 로그 수정 함수 인자 (update_album_log)
+private nonisolated struct UpdateAlbumLogParams: Encodable {
+    let albumLogId: Int
+    let description: String
+    let removeImageIds: [Int64]
+    let newImagePaths: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case albumLogId = "p_album_log_id"
+        case description = "p_description"
+        case removeImageIds = "p_remove_image_ids"
+        case newImagePaths = "p_new_image_paths"
     }
 }
 

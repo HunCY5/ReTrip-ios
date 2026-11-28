@@ -59,6 +59,22 @@ struct AlbumStorage {
         return path
     }
 
+    /// 여러 JPEG 이미지를 전달한 순서대로 업로드 후 저장된 파일 경로 목록 반환
+    /// - 중간에 실패하면 이미 올린 파일을 정리한 뒤 오류 전달
+    func uploadImages(_ dataList: [Data], bucket: AlbumStorageBucket, memberId: UUID) async throws -> [String] {
+        var uploadedPaths: [String] = []
+        do {
+            for data in dataList {
+                let path = try await uploadImage(data, bucket: bucket, memberId: memberId)
+                uploadedPaths.append(path)
+            }
+        } catch {
+            await removeFiles(bucket: bucket, paths: uploadedPaths)
+            throw error
+        }
+        return uploadedPaths
+    }
+
     /// 파일 삭제 (실패 시 로그만 남기고 진행)
     func removeFiles(bucket: AlbumStorageBucket, paths: [String]) async {
         let targets = paths.filter { !$0.isEmpty }
