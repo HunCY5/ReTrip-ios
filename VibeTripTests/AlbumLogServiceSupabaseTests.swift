@@ -272,6 +272,33 @@ final class AlbumLogServiceSupabaseTests: XCTestCase {
         XCTAssertEqual(try SupabaseStub.removedPaths(of: remove), Self.uploadedPaths(in: requests))
     }
 
+    // 로그 작성 응답 유실(저장 여부 알 수 없음) -> 올린 사진 유지 후 throw
+    func test_saveLog_responseLost_keepsUploadedPhotos() async throws {
+        try await SupabaseStub.signIn(client, memberId: Constants.memberId)
+        SupabaseStubURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod, path) {
+            case ("POST", Path.createAlbumLog):
+                throw URLError(.networkConnectionLost)
+            case ("POST", _) where path.hasPrefix(Path.logImagesObjectPrefix):
+                return SupabaseStub.response(Self.uploadJSON, for: request)
+            case ("DELETE", Path.removeLogImages):
+                return SupabaseStub.response("[]", for: request)
+            default:
+                throw URLError(.badServerResponse)
+            }
+        }
+
+        do {
+            try await sut.saveLog(request: Self.makeSaveRequest(photoCount: 2))
+            XCTFail("에러가 throw되어야 합니다")
+        } catch {}
+
+        let requests = SupabaseStubURLProtocol.capturedRequests
+        XCTAssertEqual(Self.uploadedPaths(in: requests).count, 2)
+        XCTAssertFalse(requests.contains { $0.httpMethod == "DELETE" })
+    }
+
     // MARK: - updateLog
 
     // 새 사진 업로드 -> 텍스트·사진 변경 함수 호출 -> 삭제된 기존 사진 파일 정리
@@ -355,6 +382,33 @@ final class AlbumLogServiceSupabaseTests: XCTestCase {
         XCTAssertEqual(try SupabaseStub.removedPaths(of: try XCTUnwrap(removals.first)), Self.uploadedPaths(in: requests))
     }
 
+    // 로그 변경 응답 해석 실패(이미 반영됐을 수 있음) -> 새로 올린 사진 유지 후 throw
+    func test_updateLog_undecodableResponse_keepsNewPhotos() async throws {
+        try await SupabaseStub.signIn(client, memberId: Constants.memberId)
+        SupabaseStubURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod, path) {
+            case ("POST", Path.updateAlbumLog):
+                return SupabaseStub.response(Self.undecodableJSON, for: request)
+            case ("POST", _) where path.hasPrefix(Path.logImagesObjectPrefix):
+                return SupabaseStub.response(Self.uploadJSON, for: request)
+            case ("DELETE", Path.removeLogImages):
+                return SupabaseStub.response("[]", for: request)
+            default:
+                throw URLError(.badServerResponse)
+            }
+        }
+
+        do {
+            try await sut.updateLog(request: Self.makeUpdateRequest(newPhotoCount: 2, removeImageIds: [3]))
+            XCTFail("에러가 throw되어야 합니다")
+        } catch {}
+
+        let requests = SupabaseStubURLProtocol.capturedRequests
+        XCTAssertEqual(Self.uploadedPaths(in: requests).count, 2)
+        XCTAssertFalse(requests.contains { $0.httpMethod == "DELETE" })
+    }
+
     // MARK: - deleteAlbumLog
 
     // 사진 경로 조회 -> 로그 삭제 -> 사진 파일 정리 순서로 진행
@@ -429,6 +483,8 @@ final class AlbumLogServiceSupabaseTests: XCTestCase {
     // MARK: - Helpers
 
     private static let errorJSON = #"{"message":"server error"}"#
+    // 삭제된 사진 경로 목록(배열) 대신 객체가 와서 해석할 수 없는 응답
+    private static let undecodableJSON = "{}"
     private static let notFoundJSON =
         #"{"code":"PGRST116","message":"JSON object requested, multiple (or no) rows returned","details":null,"hint":null}"#
     private static let uploadJSON = #"{"Key":"log-images/uploaded.jpg","Id":"1"}"#
