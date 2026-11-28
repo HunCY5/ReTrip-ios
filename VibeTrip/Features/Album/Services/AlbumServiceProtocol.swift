@@ -312,7 +312,8 @@ final class AlbumService: AlbumServiceProtocol {
 
     // 로그 작성: 사진 업로드 -> 로그와 사진 정보 한 번에 추가
     // - 사진은 선택한 순서대로 저장
-    // - 로그 추가 실패 시 올린 사진은 사용되지 않으므로 정리
+    // - DB가 로그 추가를 거절한 경우에만 올린 사진 정리
+    //   (응답을 받지 못한 경우는 이미 저장됐을 수 있어 사진이 깨지지 않도록 유지)
     func saveLog(request: AlbumLogRequest) async throws {
         guard let albumId = Int(request.albumId) else {
             throw AlbumError.unknown
@@ -332,14 +333,17 @@ final class AlbumService: AlbumServiceProtocol {
         do {
             try await supabase.rpc(Function.createAlbumLog, params: params).execute()
         } catch {
-            await storage.removeFiles(bucket: .logImages, paths: imagePaths)
+            if Self.isRejectedByDatabase(error) {
+                await storage.removeFiles(bucket: .logImages, paths: imagePaths)
+            }
             throw error
         }
     }
 
     // 로그 수정: 새 사진 업로드 -> 텍스트·사진 정보 한 번에 변경 -> 삭제된 사진 파일 정리
     // - 본인 로그가 아니면 변경 실패
-    // - 로그 변경 실패 시 새로 올린 사진은 사용되지 않으므로 정리
+    // - DB가 로그 변경을 거절한 경우에만 새로 올린 사진 정리
+    //   (응답을 받지 못했거나 응답 해석에 실패한 경우는 이미 반영됐을 수 있어 유지)
     // - 기존 사진 파일은 로그 변경이 확정된 뒤 정리 (정리 실패해도 수정은 성공 처리)
     func updateLog(request: AlbumLogUpdateRequest) async throws {
         let memberId = try await supabase.auth.session.user.id
@@ -361,11 +365,20 @@ final class AlbumService: AlbumServiceProtocol {
                 .execute()
                 .value
         } catch {
-            await storage.removeFiles(bucket: .logImages, paths: newImagePaths)
+            if Self.isRejectedByDatabase(error) {
+                await storage.removeFiles(bucket: .logImages, paths: newImagePaths)
+            }
             throw error
         }
 
         await storage.removeFiles(bucket: .logImages, paths: removedImagePaths)
+    }
+
+    // DB가 요청을 거절해 변경이 반영되지 않았음이 확실한지 판단
+    // - PostgREST 오류 응답: 요청 트랜잭션이 롤백됨 -> true
+    // - 네트워크 오류·게이트웨이 오류·응답 해석 실패: 반영 여부를 알 수 없음 -> false
+    private static func isRejectedByDatabase(_ error: Error) -> Bool {
+        error is PostgrestError
     }
 
     // 로그 삭제 후 사진 파일 정리
