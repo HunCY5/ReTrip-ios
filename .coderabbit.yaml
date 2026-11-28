@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# 프로젝트 규칙은 저장소의 CLAUDE.md를 CodeRabbit이 자동으로 읽어 리뷰 기준으로 사용한다.
+language: ko-KR
+tone_instructions: "간결하고 구체적으로 작성하고, 문제 지점과 고치는 방법을 함께 제시한다. 취향 차이나 포맷팅 지적은 생략한다."
+
+reviews:
+  profile: chill
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  poem: false
+  in_progress_fortune: false
+  review_status: true
+  review_info: false
+  collapse_walkthrough: true
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  suggested_reviewers: false
+  enable_prompt_for_ai_agents: false
+  path_filters:
+    - "!**/*.pbxproj"
+    - "!**/*.xcassets/**"
+    - "!**/xcshareddata/**"
+    - "!**/Package.resolved"
+    - "!supabase/.temp/**"
+  path_instructions:
+    - path: "**/*.swift"
+      instructions: |
+        - View / ViewModel / Model 레이어 분리와 Protocol 기반 서비스 구조를 지키는지 확인
+        - async/await 사용, UI 갱신의 메인 스레드 보장, 클로저 순환 참조 여부 확인
+        - 네트워크 실패와 옵셔널 처리 등 예외 처리 누락 확인
+    - path: "supabase/**/*.sql"
+      instructions: |
+        - RLS 정책이 본인 데이터만 접근하도록 제한하는지 확인
+        - 함수의 security invoker/definer 선택과 권한 부여가 적절한지 확인
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "^develop$"
+
+chat:
+  auto_reply: true
